@@ -1,3 +1,5 @@
+[THIS IS WORK IN PROGRESS]
+
 # HyperSpot Server
 
 A Powerful service written in Go for managing, interacting with, and evaluating large language models (LLMs) across local and cloud-based providers. It combines model orchestration, chat, benchmarking and intelligent search into a unified control plane.
