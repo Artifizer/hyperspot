@@ -11,9 +11,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
-	jobs "github.com/hypernetix/hyperspot/libs/job"
 	"github.com/hypernetix/hyperspot/libs/logging"
 	"github.com/hypernetix/hyperspot/libs/utils"
+	jobs "github.com/hypernetix/hyperspot/modules/job"
 )
 
 // DockerExecutor extends CodeExecutor with Docker-specific functionality

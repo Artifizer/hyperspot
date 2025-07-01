@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	jobs "github.com/hypernetix/hyperspot/libs/job"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	jobs "github.com/hypernetix/hyperspot/modules/job"
 )
 
 var sshExecutors = make(map[string]*ConfigCodeExecutorSSH)

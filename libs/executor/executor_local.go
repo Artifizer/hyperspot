@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/config"
-	jobs "github.com/hypernetix/hyperspot/libs/job"
+	jobs "github.com/hypernetix/hyperspot/module/job"
 )
 
 var localExecutors = make(map[string]*ConfigCodeExecutorLocal)
