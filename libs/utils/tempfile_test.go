@@ -37,20 +37,20 @@ func TestSaveUploadedTempFile(t *testing.T) {
 
 		// Call the function
 		tempPath, err := SaveUploadedTempFile(testFile, "", testFilename)
-		
+
 		// Assertions
 		require.NoError(t, err)
 		defer os.Remove(tempPath) // Clean up
-		
+
 		// Verify file was created
 		assert.FileExists(t, tempPath)
-		
+
 		// Verify file extension
 		assert.Equal(t, ".txt", filepath.Ext(tempPath))
-		
+
 		// Verify file name pattern
 		assert.True(t, strings.Contains(filepath.Base(tempPath), "hyperspot_upload_"))
-		
+
 		// Verify file content
 		content, err := os.ReadFile(tempPath)
 		require.NoError(t, err)
@@ -63,25 +63,25 @@ func TestSaveUploadedTempFile(t *testing.T) {
 		customTempDir, err := os.MkdirTemp("", "hyperspot_test_*")
 		require.NoError(t, err)
 		defer os.RemoveAll(customTempDir) // Clean up
-		
+
 		// Create test data
 		testContent := "custom temp dir test content"
 		testFile := createTestMultipartFile(testContent)
 		testFilename := "custom_test.pdf"
-		
+
 		// Call the function
 		tempPath, err := SaveUploadedTempFile(testFile, customTempDir, testFilename)
-		
+
 		// Assertions
 		require.NoError(t, err)
-		
+
 		// Verify file was created in the custom directory
 		assert.FileExists(t, tempPath)
 		assert.Equal(t, customTempDir, filepath.Dir(tempPath))
-		
+
 		// Verify file extension
 		assert.Equal(t, ".pdf", filepath.Ext(tempPath))
-		
+
 		// Verify file content
 		content, err := os.ReadFile(tempPath)
 		require.NoError(t, err)
@@ -93,14 +93,14 @@ func TestSaveUploadedTempFile(t *testing.T) {
 		testContent := "no extension file"
 		testFile := createTestMultipartFile(testContent)
 		testFilename := "no_extension_file"
-		
+
 		tempPath, err := SaveUploadedTempFile(testFile, "", testFilename)
 		require.NoError(t, err)
 		defer os.Remove(tempPath)
-		
+
 		assert.FileExists(t, tempPath)
 		assert.Equal(t, "", filepath.Ext(tempPath))
-		
+
 		content, err := os.ReadFile(tempPath)
 		require.NoError(t, err)
 		assert.Equal(t, testContent, string(content))
@@ -110,10 +110,10 @@ func TestSaveUploadedTempFile(t *testing.T) {
 	t.Run("ErrorCreatingTempFile", func(t *testing.T) {
 		testFile := createTestMultipartFile("error test")
 		testFilename := "test.txt"
-		
+
 		// Use a non-existent directory to force an error
 		nonExistentDir := "/non/existent/directory"
-		
+
 		_, err := SaveUploadedTempFile(testFile, nonExistentDir, testFilename)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create temporary file")
@@ -124,7 +124,7 @@ func TestSaveUploadedTempFile(t *testing.T) {
 		// Create a mock multipart file that fails on read
 		testFile := &mockFailingMultipartFile{}
 		testFilename := "failing.txt"
-		
+
 		_, err := SaveUploadedTempFile(testFile, "", testFilename)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to copy file content")

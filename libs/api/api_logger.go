@@ -25,7 +25,6 @@ func logAPIRequest(req *http.Request) {
 	// Only log body if debug level is enabled and it's not a file upload
 	if logger.ConsoleLevel >= logging.DebugLevel ||
 		logger.FileLevel >= logging.DebugLevel {
-
 		// Skip body logging for file uploads (multipart/form-data)
 		contentType := req.Header.Get("Content-Type")
 		isFileUpload := contentType != "" && strings.HasPrefix(contentType, "multipart/form-data")
