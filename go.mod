@@ -17,6 +17,7 @@ require (
 	github.com/hashicorp/go-getter v1.7.8
 	github.com/mindprince/gonvml v0.0.0-20211002210717-ac0b66419a41
 	github.com/natefinch/lumberjack v2.0.0+incompatible
+	github.com/prometheus/client_golang v1.22.0
 	github.com/shirou/gopsutil/v4 v4.25.6
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.10.0
@@ -35,7 +36,13 @@ require (
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
+	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.62.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
