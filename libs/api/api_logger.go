@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/hypernetix/hyperspot/libs/logging"
@@ -21,11 +22,16 @@ var logger *logging.Logger = logging.MainLogger // Initially set to main logger,
 func logAPIRequest(req *http.Request) {
 	var body string
 
-	// Only log body if debug level is enabled
+	// Only log body if debug level is enabled and it's not a file upload
 	if logger.ConsoleLevel >= logging.DebugLevel ||
 		logger.FileLevel >= logging.DebugLevel {
-		// Peek at the body without consuming it
-		if req.Body != nil {
+
+		// Skip body logging for file uploads (multipart/form-data)
+		contentType := req.Header.Get("Content-Type")
+		isFileUpload := contentType != "" && strings.HasPrefix(contentType, "multipart/form-data")
+
+		// Peek at the body without consuming it (only if not a file upload)
+		if req.Body != nil && !isFileUpload {
 			// Create a tee reader to read the body while preserving it
 			var buf bytes.Buffer
 			tee := io.TeeReader(req.Body, &buf)
@@ -64,6 +70,8 @@ func logAPIRequest(req *http.Request) {
 			msg := fmt.Sprintf("API request:  %s %s from %s", method, uri, from)
 			if body != "" {
 				msg += " body: " + body
+			} else {
+				msg += " body: (skipped, multipart/form-data)"
 			}
 			logger.ConsoleLogger.Debug(msg)
 		} else {

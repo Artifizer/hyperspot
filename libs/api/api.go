@@ -14,8 +14,6 @@ import (
 	"github.com/hypernetix/hyperspot/libs/config"
 )
 
-var humaConfig = huma.DefaultConfig("HyperSpot Server API", "0.1.0")
-
 type responseRecorder struct {
 	middleware.WrapResponseWriter
 	body *bytes.Buffer
@@ -85,6 +83,11 @@ func SetupAPI(router *chi.Mux) huma.API {
 	router.Use(loggerMiddleware)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(serverTimeout))
+
+	var humaConfig = huma.DefaultConfig("HyperSpot Server API", "0.1.0")
+
+	// Use the default description from the apiConfigInstance
+	humaConfig.OpenAPI.Info.Description = apiConfigInstance.DocsOverview
 
 	// Create Huma API
 	api := humachi.New(router, humaConfig)
