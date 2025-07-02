@@ -93,11 +93,17 @@ func OrmDeleteObjs(query *gorm.DB, primaryField string, limit int, batchSize int
 		if limit > 0 && totalDeleted+int64(len(ids)) > int64(limit) {
 			ids = ids[:limit-int(totalDeleted)]
 		}
-		res := query.Session(&gorm.Session{}).Where(fmt.Sprintf("%s IN ?", primaryField), ids).Delete(query.Statement.Model)
-		if res.Error != nil {
-			return totalDeleted, errorx.NewErrBadRequest(res.Error.Error())
+		// Execute batch delete with retry logic
+		rowsAffected, err := RetryWithResult(func() (int64, error) {
+			res := query.Session(&gorm.Session{}).Where(fmt.Sprintf("%s IN ?", primaryField), ids).Delete(query.Statement.Model)
+			return res.RowsAffected, res.Error
+		}, DefaultRetryConfig())
+
+		if err != nil {
+			return totalDeleted, err
 		}
-		totalDeleted += res.RowsAffected
+
+		totalDeleted += rowsAffected
 		if limit > 0 && totalDeleted >= int64(limit) {
 			break
 		}
@@ -191,11 +197,17 @@ func OrmUpdateObjs(query *gorm.DB, primaryField string, updates map[string]inter
 	}
 	// second loop: perform updates
 	for _, ids := range idBatches {
-		res := query.Session(&gorm.Session{}).Where(fmt.Sprintf("%s IN ?", primaryField), ids).Updates(updates)
-		if res.Error != nil {
-			return totalUpdated, errorx.NewErrBadRequest(res.Error.Error())
+		// Execute batch update with retry logic
+		rowsAffected, err := RetryWithResult(func() (int64, error) {
+			res := query.Session(&gorm.Session{}).Where(fmt.Sprintf("%s IN ?", primaryField), ids).Updates(updates)
+			return res.RowsAffected, res.Error
+		}, DefaultRetryConfig())
+
+		if err != nil {
+			return totalUpdated, err
 		}
-		totalUpdated += res.RowsAffected
+
+		totalUpdated += rowsAffected
 	}
 	return totalUpdated, nil
 }

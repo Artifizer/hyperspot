@@ -230,7 +230,7 @@ func parseGormColumnName(tag, defaultName string) string {
 
 // OrmUpdateObjFields accepts a model and a variable list of pointers to fields that need updating.
 // It uses reflection to determine the corresponding GORM column name for each field,
-// builds an update map, and performs the update via GORM.
+// builds an update map, and performs the update via GORM with automatic retry for database locks.
 func OrmUpdateObjFields(model interface{}, pkFields map[string]interface{}, updates ...interface{}) errorx.Error {
 	// Recursively unwrap pointers until we get to a pointer to a struct
 	modelValue := reflect.ValueOf(model)
@@ -283,12 +283,11 @@ func OrmUpdateObjFields(model interface{}, pkFields map[string]interface{}, upda
 			return errorx.NewErrBadRequest(fmt.Sprintf("field not found for update parameter: %v", updatePtr))
 		}
 	}
-	// Use GORM to update only the specified fields.
-	err := query.Updates(updateMap).Error
-	if err != nil {
-		return errorx.NewErrInternalServerError(err.Error())
-	}
-	return nil
+
+	// Execute the update with retry logic
+	return RetryWithError(func() error {
+		return query.Updates(updateMap).Error
+	}, DefaultRetryConfig())
 }
 
 // findFieldByPointer recursively searches for a field matching the given pointer
