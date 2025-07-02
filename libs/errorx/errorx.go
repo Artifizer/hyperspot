@@ -14,6 +14,7 @@ import (
 // Error is the interface that all errors should implement
 type Error interface {
 	Error() string
+	GetStatus() int
 	HumaError() huma.StatusError
 }
 
@@ -30,6 +31,10 @@ func NewErrorx(msg string, args ...any) Error {
 
 func (e *baseErrorImpl) HumaError() huma.StatusError {
 	return huma.Error500InternalServerError(e.Error())
+}
+
+func (e *baseErrorImpl) GetStatus() int {
+	return http.StatusInternalServerError
 }
 
 //
@@ -50,6 +55,10 @@ func (e *StatusAccepted) HumaError() huma.StatusError {
 	return huma.NewError(http.StatusAccepted, e.Error())
 }
 
+func (e *StatusAccepted) GetStatus() int {
+	return http.StatusAccepted
+}
+
 //
 // Client errors (4xx)
 //
@@ -68,6 +77,10 @@ func (e *ErrBadRequest) HumaError() huma.StatusError {
 	return huma.Error400BadRequest(e.Error())
 }
 
+func (e *ErrBadRequest) GetStatus() int {
+	return http.StatusBadRequest
+}
+
 // Forbidden (403)
 
 type ErrForbidden struct {
@@ -80,6 +93,10 @@ func NewErrForbidden(msg string, args ...any) Error {
 
 func (e *ErrForbidden) HumaError() huma.StatusError {
 	return huma.Error403Forbidden(e.Error())
+}
+
+func (e *ErrForbidden) GetStatus() int {
+	return http.StatusForbidden
 }
 
 // Not found (404)
@@ -96,6 +113,10 @@ func (e *ErrNotFound) HumaError() huma.StatusError {
 	return huma.Error404NotFound(e.Error())
 }
 
+func (e *ErrNotFound) GetStatus() int {
+	return http.StatusNotFound
+}
+
 // Method not allowed (405)
 
 type ErrMethodNotAllowed struct {
@@ -110,6 +131,10 @@ func (e *ErrMethodNotAllowed) HumaError() huma.StatusError {
 	return huma.Error405MethodNotAllowed(e.Error())
 }
 
+func (e *ErrMethodNotAllowed) GetStatus() int {
+	return http.StatusMethodNotAllowed
+}
+
 // Conflict (409)
 
 type ErrConflict struct {
@@ -122,6 +147,46 @@ func NewErrConflict(msg string, args ...any) Error {
 
 func (e *ErrConflict) HumaError() huma.StatusError {
 	return huma.Error409Conflict(e.Error())
+}
+
+func (e *ErrConflict) GetStatus() int {
+	return http.StatusConflict
+}
+
+// PayloadTooLarge (413)
+
+type ErrPayloadTooLarge struct {
+	baseErrorImpl
+}
+
+func NewErrPayloadTooLarge(msg string, args ...any) Error {
+	return &ErrPayloadTooLarge{baseErrorImpl{err: fmt.Errorf(msg, args...)}}
+}
+
+func (e *ErrPayloadTooLarge) HumaError() huma.StatusError {
+	return huma.NewError(http.StatusRequestEntityTooLarge, e.Error())
+}
+
+func (e *ErrPayloadTooLarge) GetStatus() int {
+	return http.StatusRequestEntityTooLarge
+}
+
+// Unsupported Media Type (415)
+
+type ErrUnsupportedMediaType struct {
+	baseErrorImpl
+}
+
+func NewErrUnsupportedMediaType(msg string, args ...any) Error {
+	return &ErrUnsupportedMediaType{baseErrorImpl{err: fmt.Errorf(msg, args...)}}
+}
+
+func (e *ErrUnsupportedMediaType) HumaError() huma.StatusError {
+	return huma.Error415UnsupportedMediaType(e.Error())
+}
+
+func (e *ErrUnsupportedMediaType) GetStatus() int {
+	return http.StatusUnsupportedMediaType
 }
 
 //
@@ -142,6 +207,10 @@ func (e *ErrInternalServerError) HumaError() huma.StatusError {
 	return huma.Error500InternalServerError(e.Error())
 }
 
+func (e *ErrInternalServerError) GetStatus() int {
+	return http.StatusInternalServerError
+}
+
 // Not implemented (501)
 
 type ErrNotImplemented struct {
@@ -154,4 +223,8 @@ func NewErrNotImplemented(msg string, args ...any) Error {
 
 func (e *ErrNotImplemented) HumaError() huma.StatusError {
 	return huma.Error501NotImplemented(e.Error())
+}
+
+func (e *ErrNotImplemented) GetStatus() int {
+	return http.StatusNotImplemented
 }
