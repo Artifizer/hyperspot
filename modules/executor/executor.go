@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/core"
-	jobs "github.com/hypernetix/hyperspot/libs/job"
+	jobs "github.com/hypernetix/hyperspot/modules/job"
 )
 
 type ExecutorType string

@@ -9,7 +9,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/errorx"
-	jobs "github.com/hypernetix/hyperspot/libs/job"
+	jobs "github.com/hypernetix/hyperspot/modules/job"
 )
 
 // DockerImageDownloadJobParams represents parameters for Docker image download jobs

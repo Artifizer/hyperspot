@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/hypernetix/hyperspot/libs/errorx"
-	"github.com/hypernetix/hyperspot/libs/job"
 	"github.com/hypernetix/hyperspot/libs/utils"
+	"github.com/hypernetix/hyperspot/modules/job"
 )
 
 var testModuleJobQueue = job.JobQueueName("test-module-job-queue")
