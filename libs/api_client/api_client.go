@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"errors"
 
 	"github.com/hypernetix/hyperspot/libs/core"
 	"github.com/hypernetix/hyperspot/libs/logging"
@@ -122,11 +125,137 @@ func (c *BaseAPIClient) doRequest(ctx context.Context, method string, path strin
 		c.logUpstreamRequest(req)
 	}
 
-	// Send request
-	if longTimeout {
-		return c.httpLongTimeout.Do(req)
+	// Execute request with retry logic
+	return c.doRequestWithRetry(ctx, req, body, longTimeout)
+}
+
+// doRequestWithRetry executes HTTP request with exponential backoff retry logic
+func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Request, body []byte, longTimeout bool) (*http.Response, error) {
+	const maxTotalTime = 500 * time.Millisecond
+	const baseDelay = 10 * time.Millisecond
+	const multiplier = 4
+
+	startTime := time.Now()
+	var lastErr error
+	attempt := 0
+
+	for {
+		// Check if context is cancelled before retry
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		// Create a new request body reader for each attempt
+		if body != nil {
+			req.Body = io.NopCloser(bytes.NewReader(body))
+		}
+
+		// Send request
+		var resp *http.Response
+		var err error
+		if longTimeout {
+			resp, err = c.httpLongTimeout.Do(req)
+		} else {
+			resp, err = c.httpShortTimeout.Do(req)
+		}
+
+		// If successful, return immediately
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+
+		// Check if error is retryable (connection errors)
+		if !isRetryableError(err) {
+			// Non-retryable error, return immediately
+			return nil, err
+		}
+
+		// Check if we have time left for another retry
+		elapsed := time.Since(startTime)
+		if elapsed >= maxTotalTime {
+			break // Time exhausted
+		}
+
+		// Calculate progressive delay: 10ms * 4^attempt
+		delay := baseDelay
+		for i := 0; i < attempt; i++ {
+			delay *= multiplier
+		}
+
+		// Check if we have enough time left for this delay
+		remainingTime := maxTotalTime - elapsed
+		if delay > remainingTime {
+			// Use remaining time or skip if too little time left
+			if remainingTime < time.Millisecond {
+				break // Not enough time for meaningful retry
+			}
+			delay = remainingTime
+		}
+
+		// Wait before retry
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+			// Continue to next attempt
+		}
+
+		attempt++
 	}
-	return c.httpShortTimeout.Do(req)
+
+	// All retries exhausted within time window
+	totalTime := time.Since(startTime)
+	return nil, fmt.Errorf("request failed after %d attempts in %v: %w", attempt+1, totalTime, lastErr)
+}
+
+// isRetryableError determines if an error is worth retrying
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// Connection errors that are typically transient
+	retryableErrors := []string{
+		"connection refused",
+		"connection reset by peer",
+		"no such host",
+		"network is unreachable",
+		"timeout",
+		"temporary failure",
+		"service unavailable",
+		"i/o timeout",
+		"context deadline exceeded",
+	}
+
+	for _, retryable := range retryableErrors {
+		if strings.Contains(strings.ToLower(errStr), retryable) {
+			return true
+		}
+	}
+
+	// Check for specific network error types
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	// Check for DNS errors
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.Temporary()
+	}
+
+	// Check for syscall errors (like ECONNREFUSED)
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true // Most network operation errors are retryable
+	}
+
+	return false
 }
 
 func (c *BaseAPIClient) Request(ctx context.Context, method string, path string, api_key string, body []byte, logRequest bool) (*http.Response, error) {
@@ -150,6 +279,7 @@ func (c *BaseAPIClient) doRequestAndParse(ctx context.Context, method string, pa
 		upstreamResp, err = c.Request(ctx, method, path, api_key, body, true)
 	}
 	if upstreamResp == nil {
+		logging.Error("%s: upstream request '%s %s' failed: %s", c.GetName(), method, path, err)
 		c.SetUpstreamLikelyIsOffline(ctx)
 		return nil, err
 	}
@@ -301,8 +431,6 @@ func (c *BaseAPIClient) StartOnlineWatchdog(ctx context.Context) {
 			case <-time.After(sleep):
 				// continue to check the service status
 			}
-
-			// fmt.Printf("Checking if the service is alive: %s\n", c.GetFullName())
 
 			resp, err := c.Request(context.Background(), "GET", c.baseUrl, "", nil, false)
 			if err != nil {
