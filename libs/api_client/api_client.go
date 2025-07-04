@@ -207,7 +207,7 @@ func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Reques
 
 	// All retries exhausted within time window
 	totalTime := time.Since(startTime)
-	return nil, fmt.Errorf("request failed after %d attempts in %v: %w", attempt+1, totalTime, lastErr)
+	return nil, fmt.Errorf("request failed after %d attempts in %dms: %w", attempt+1, totalTime.Milliseconds(), lastErr)
 }
 
 // isRetryableError determines if an error is worth retrying
@@ -279,7 +279,7 @@ func (c *BaseAPIClient) doRequestAndParse(ctx context.Context, method string, pa
 		upstreamResp, err = c.Request(ctx, method, path, api_key, body, true)
 	}
 	if upstreamResp == nil {
-		logging.Error("%s: upstream request '%s %s' failed: %s", c.GetName(), method, path, err)
+		logging.Debug("Upstream request '%s %s%s' failed: %s", method, c.baseUrl, path, err)
 		c.SetUpstreamLikelyIsOffline(ctx)
 		return nil, err
 	}
