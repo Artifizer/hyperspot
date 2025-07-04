@@ -54,9 +54,11 @@ type BaseAPIClient struct {
 	// background discovery feature
 	enableDiscovery   bool
 	discoveryIsActive bool
+	// retry configuration
+	retryTimeout time.Duration // 0 disables retries, default 500ms
 }
 
-// NewBaseAPIClient creates a new base API client
+// NewBaseAPIClient creates a new base API client with default 500ms retry policy
 func NewBaseAPIClient(
 	name string,
 	baseURL string,
@@ -72,6 +74,7 @@ func NewBaseAPIClient(
 		shortTimeoutSec: shortTimeoutSec,
 		longTimeoutSec:  longTimeoutSec,
 		enableDiscovery: enableDiscovery,
+		retryTimeout:    500 * time.Millisecond,
 		httpShortTimeout: &http.Client{
 			Timeout: time.Duration(shortTimeoutSec) * time.Second,
 			Transport: &http.Transport{
@@ -129,9 +132,26 @@ func (c *BaseAPIClient) doRequest(ctx context.Context, method string, path strin
 	return c.doRequestWithRetry(ctx, req, body, longTimeout)
 }
 
+// SetRetryPolicy sets the retry timeout duration. Set to 0 to disable retries.
+func (c *BaseAPIClient) SetRetryTimeout(retryTimeout time.Duration) {
+	c.retryTimeout = retryTimeout
+}
+
 // doRequestWithRetry executes HTTP request with exponential backoff retry logic
 func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Request, body []byte, longTimeout bool) (*http.Response, error) {
-	const maxTotalTime = 500 * time.Millisecond
+	// If retry policy is 0, disable retries
+	if c.retryTimeout == 0 {
+		// Single attempt without retries
+		if body != nil {
+			req.Body = io.NopCloser(bytes.NewReader(body))
+		}
+
+		if longTimeout {
+			return c.httpLongTimeout.Do(req)
+		}
+		return c.httpShortTimeout.Do(req)
+	}
+
 	const baseDelay = 10 * time.Millisecond
 	const multiplier = 4
 
@@ -174,7 +194,7 @@ func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Reques
 
 		// Check if we have time left for another retry
 		elapsed := time.Since(startTime)
-		if elapsed >= maxTotalTime {
+		if elapsed >= c.retryTimeout {
 			break // Time exhausted
 		}
 
@@ -185,7 +205,7 @@ func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Reques
 		}
 
 		// Check if we have enough time left for this delay
-		remainingTime := maxTotalTime - elapsed
+		remainingTime := c.retryTimeout - elapsed
 		if delay > remainingTime {
 			// Use remaining time or skip if too little time left
 			if remainingTime < time.Millisecond {
@@ -207,7 +227,7 @@ func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Reques
 
 	// All retries exhausted within time window
 	totalTime := time.Since(startTime)
-	return nil, fmt.Errorf("request failed after %d attempts in %dms: %w", attempt+1, totalTime.Milliseconds(), lastErr)
+	return nil, fmt.Errorf("request failed after %d attempts in %v: %w", attempt+1, totalTime, lastErr)
 }
 
 // isRetryableError determines if an error is worth retrying
