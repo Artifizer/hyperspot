@@ -160,7 +160,7 @@ func (c *BaseAPIClient) doRequestWithRetry(ctx context.Context, req *http.Reques
 	attempt := 0
 
 	for {
-		// Check if context is cancelled before retry
+		// Check if context is canceled before retry
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
