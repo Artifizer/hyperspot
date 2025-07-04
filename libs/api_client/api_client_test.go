@@ -228,7 +228,7 @@ func TestStartOnlineWatchdog(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	client := NewBaseAPIClient("test-client", fmt.Sprintf("http://127.0.0.1:%d", port), 1, 1, false, true)
-	client.SetRetryTimeout(2 * time.Second)
+	client.SetRetryTimeout(0)
 
 	t.Run("Successful request/response", func(t *testing.T) {
 		ctx := context.Background()
