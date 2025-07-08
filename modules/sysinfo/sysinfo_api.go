@@ -16,7 +16,7 @@ type SysInfoAPIResponse struct {
 }
 
 type GetSysInfoByIDInput struct {
-	ID string `path:"id" doc:"System info ID"`
+	ID uuid.UUID `path:"id" doc:"System info UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
 func initSysInfoAPIRoutes(humaApi huma.API) {
@@ -46,10 +46,13 @@ func initSysInfoAPIRoutes(humaApi huma.API) {
 		Summary:     "Get historical system information by ID",
 		Tags:        []string{"System Information"},
 	}, func(ctx context.Context, input *GetSysInfoByIDInput) (*SysInfoAPIResponse, error) {
-		sysInfoId, err := uuid.Parse(input.ID)
-		if err != nil {
-			return nil, huma.Error400BadRequest("Invalid sysinfo ID")
-		}
+		/*
+			sysInfoId, err := uuid.Parse(input.ID)
+			if err != nil {
+				return nil, huma.Error400BadRequest("Invalid sysinfo ID")
+			}
+		*/
+		sysInfoId := input.ID
 
 		sysInfo, errx := GetSysInfoFromDB(sysInfoId)
 		if errx != nil {

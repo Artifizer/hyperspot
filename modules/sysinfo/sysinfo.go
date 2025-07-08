@@ -29,7 +29,7 @@ func GetSysInfoPersisted() (*utils.SystemInfo, errorx.Error) {
 
 func GetSysInfoFromDB(id uuid.UUID) (*utils.SystemInfo, errorx.Error) {
 	var sysInfo utils.SystemInfo
-	if err := db.DB.Where("id = ?", id).First(&sysInfo).Error; err != nil {
+	if err := db.DB().Where("id = ?", id).First(&sysInfo).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errorx.NewErrNotFound("sysinfo record not found")
 		}
@@ -43,7 +43,7 @@ func SaveSysInfoToDB(sysInfo *utils.SystemInfo) error {
 	if errx == nil {
 		return nil
 	}
-	return db.DB.Save(sysInfo).Error
+	return db.DB().Save(sysInfo).Error
 }
 
 func InitModule() {
