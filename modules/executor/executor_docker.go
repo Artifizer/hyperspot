@@ -99,9 +99,13 @@ func (e *DockerExecutor) InstallRuntime(ctx context.Context, contextJob *jobs.Jo
 	}
 
 	if contextJob != nil {
-		contextJob.SetLockedBy(ctx, downloadJob.GetJobID())
+		if err := contextJob.SetLockedBy(ctx, downloadJob.GetJobID()); err != nil {
+			return fmt.Errorf("failed to set job locked by: %w", err)
+		}
 		jobs.JEWaitJob(ctx, downloadJob.GetJobID(), downloadJob.GetTimeoutSec())
-		contextJob.SetUnlocked(ctx)
+		if err := contextJob.SetUnlocked(ctx); err != nil {
+			return fmt.Errorf("failed to set job unlocked: %w", err)
+		}
 	} else {
 		jobs.JEWaitJob(ctx, downloadJob.GetJobID(), downloadJob.GetTimeoutSec())
 	}
@@ -116,7 +120,9 @@ func (e *DockerExecutor) GetExecutorId() string {
 
 // ExecutePythonCode builds and runs the Docker container executing the Python code
 func (e *DockerExecutor) ExecutePythonCode(ctx context.Context, contextJob *jobs.JobObj, code string) (*CodeExecutionResult, error) {
-	e.InstallRuntime(ctx, contextJob)
+	if err := e.InstallRuntime(ctx, contextJob); err != nil {
+		return nil, fmt.Errorf("failed to install runtime: %w", err)
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
