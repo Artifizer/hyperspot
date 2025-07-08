@@ -11,6 +11,9 @@ import (
 )
 
 var (
+	// globalMutex protects access to global debug settings
+	globalMutex sync.RWMutex
+
 	// MutexDebugEnabled enables mutex debugging features globally
 	MutexDebugEnabled = false
 
@@ -20,17 +23,23 @@ var (
 
 // SetMutexDebug enables or disables mutex debugging globally
 func SetMutexDebug(enabled bool) {
+	globalMutex.Lock()
+	defer globalMutex.Unlock()
 	MutexDebugEnabled = enabled
 }
 
 // SetMutexDeadlockWarningDelay sets the delay before warning about potential deadlocks
 func SetMutexDeadlockWarningDelay(seconds int) {
+	globalMutex.Lock()
+	defer globalMutex.Unlock()
 	WarnAfterLockDelaySeconds = seconds
 }
 
 // DebugMutex is a drop-in replacement for sync.Mutex with debugging capabilities
 type DebugMutex struct {
 	sync.Mutex
+	// stateMutex protects the debug state fields to prevent data races
+	stateMutex  sync.Mutex
 	filename    string
 	line        int
 	owner       int64
@@ -42,7 +51,11 @@ type DebugMutex struct {
 
 // Lock acquires the mutex with debug capabilities
 func (m *DebugMutex) Lock() {
-	if !MutexDebugEnabled {
+	globalMutex.RLock()
+	isDebugEnabled := MutexDebugEnabled
+	globalMutex.RUnlock()
+
+	if !isDebugEnabled {
 		m.Mutex.Lock()
 		return
 	}
@@ -53,30 +66,66 @@ func (m *DebugMutex) Lock() {
 	_, file, line, _ := runtime.Caller(1)
 
 	// Check for self-deadlock (same goroutine already holds the lock)
-	if m.isLocked && m.owner == currentGoID {
+	m.stateMutex.Lock()
+	isLocked := m.isLocked
+	owner := m.owner
+	filename := m.filename
+	curLine := m.line
+	curStackTrace := m.stackTrace
+	warnStarted := m.warnStarted
+	m.stateMutex.Unlock()
+
+	if isLocked && owner == currentGoID {
 		logging.Error("Potential deadlock detected - goroutine %d attempting to lock mutex at:\n\n%s:%d\n%s\nthat it already holds at:\n\n%s:%d\n%s",
-			currentGoID, file, line, captureStack(), m.filename, m.line, m.stackTrace)
+			currentGoID, file, line, captureStack(), filename, curLine, curStackTrace)
 		// Continue anyway to match sync.Mutex behavior
 	}
 
 	// Start a goroutine to warn if lock takes too long to acquire
-	if !m.warnStarted && MutexDebugEnabled {
+	globalMutex.RLock()
+	warnDebugEnabled := MutexDebugEnabled
+	globalMutex.RUnlock()
+
+	if !warnStarted && warnDebugEnabled {
+		m.stateMutex.Lock()
 		m.warnStarted = true
+		m.stateMutex.Unlock()
+
 		go func() {
-			timer := time.NewTimer(time.Duration(WarnAfterLockDelaySeconds) * time.Second)
+			globalMutex.RLock()
+			warningDelay := WarnAfterLockDelaySeconds
+			globalMutex.RUnlock()
+			timer := time.NewTimer(time.Duration(warningDelay) * time.Second)
 			for {
 				select {
 				case <-timer.C:
-					if m.isLocked {
+					m.stateMutex.Lock()
+					isLocked := m.isLocked
+					owner := m.owner
+					filename := m.filename
+					curLine := m.line
+					curStackTrace := m.stackTrace
+					lockedAt := m.lockedAt
+					m.stateMutex.Unlock()
+
+					if isLocked {
+						globalMutex.RLock()
+						warningDelay := WarnAfterLockDelaySeconds
+						globalMutex.RUnlock()
 						logging.Warn("Potential deadlock - waiting for mutex for %d seconds:\n%s:%d\n%s\n\n",
-							WarnAfterLockDelaySeconds, m.filename, m.line, captureStack())
+							warningDelay, filename, curLine, captureStack())
 						logging.Warn("Mutex is held by goroutine %d since %s, lock acquired at:\n%s:%d:\n%s",
-							m.owner, m.lockedAt.Format(time.RFC3339), m.filename, m.line, m.stackTrace)
+							owner, lockedAt.Format(time.RFC3339), filename, curLine, curStackTrace)
 						// Reset timer for next warning
-						timer.Reset(time.Duration(WarnAfterLockDelaySeconds) * time.Second)
+						globalMutex.RLock()
+						resetDelay := WarnAfterLockDelaySeconds
+						globalMutex.RUnlock()
+						timer.Reset(time.Duration(resetDelay) * time.Second)
 					} else {
 						// Lock was released, stop warning
+						m.stateMutex.Lock()
 						m.warnStarted = false
+						m.stateMutex.Unlock()
 						return
 					}
 				}
@@ -88,17 +137,23 @@ func (m *DebugMutex) Lock() {
 	m.Mutex.Lock()
 
 	// Lock acquired, record metadata
+	m.stateMutex.Lock()
 	m.isLocked = true
 	m.owner = currentGoID
 	m.filename = file
 	m.line = line
 	m.lockedAt = time.Now()
 	m.stackTrace = captureStack()
+	m.stateMutex.Unlock()
 }
 
 // Unlock releases the mutex with debug capabilities
 func (m *DebugMutex) Unlock() {
-	if !MutexDebugEnabled {
+	globalMutex.RLock()
+	isDebugEnabled := MutexDebugEnabled
+	globalMutex.RUnlock()
+
+	if !isDebugEnabled {
 		m.Mutex.Unlock()
 		return
 	}
@@ -107,25 +162,40 @@ func (m *DebugMutex) Unlock() {
 	currentGoID := getGoID()
 
 	// Check if the mutex is being unlocked by a different goroutine
-	if m.isLocked && m.owner != currentGoID {
-		_, filename, line, _ := runtime.Caller(1)
+	m.stateMutex.Lock()
+	isLocked := m.isLocked
+	owner := m.owner
+	filename := m.filename
+	curLine := m.line
+	curStackTrace := m.stackTrace
+	m.stateMutex.Unlock()
+
+	if isLocked && owner != currentGoID {
+		_, callerFile, line, _ := runtime.Caller(1)
 		logging.Error("Mutex unlocked by goroutine %d at %s:%d\n%s\nbut was locked by goroutine #%d @ %s:%d\n%s",
-			currentGoID, filename, line, captureStack(), m.owner, m.filename, m.line, m.stackTrace)
+			currentGoID, callerFile, line, captureStack(), owner, filename, curLine, curStackTrace)
 		// Continue anyway to match sync.Mutex behavior
 	}
 
 	// Clear metadata and unlock
+	m.stateMutex.Lock()
 	m.isLocked = false
 	m.owner = 0
 	m.stackTrace = ""
 	m.filename = ""
 	m.line = 0
 	m.lockedAt = time.Time{}
+	m.stateMutex.Unlock()
+
 	m.Mutex.Unlock()
 }
 
 func (m *DebugMutex) TryLock() bool {
-	if !MutexDebugEnabled {
+	globalMutex.RLock()
+	isDebugEnabled := MutexDebugEnabled
+	globalMutex.RUnlock()
+
+	if !isDebugEnabled {
 		return m.Mutex.TryLock()
 	}
 
@@ -134,25 +204,20 @@ func (m *DebugMutex) TryLock() bool {
 
 	_, file, line, _ := runtime.Caller(1)
 
-	// Check for self-deadlock (same goroutine already holds the lock)
-	// if m.isLocked && m.owner == currentGoID {
-	//	logging.Error("Potential deadlock detected - goroutine %d attempting to lock mutex at:\n%s:%d\n%s\nthat it already holds at:\n%s:%d\n%s",
-	//		currentGoID, file, line, captureStack(), m.filename, m.line, m.stackTrace)
-	//	// Continue anyway to match sync.Mutex behavior
-	// }
-
 	// Try to acquire the lock without blocking
 	if !m.Mutex.TryLock() {
 		return false
 	}
 
 	// Lock was acquired, record metadata
+	m.stateMutex.Lock()
 	m.isLocked = true
 	m.owner = currentGoID
 	m.filename = file
 	m.line = line
 	m.lockedAt = time.Now()
 	m.stackTrace = captureStack()
+	m.stateMutex.Unlock()
 	return true
 }
 
@@ -169,8 +234,16 @@ func (m *DebugMutex) TryLockWithTimeout(timeout time.Duration) bool {
 
 	var msg string
 	if MutexDebugEnabled {
+		m.stateMutex.Lock()
+		owner := m.owner
+		lockedAt := m.lockedAt
+		filename := m.filename
+		curLine := m.line
+		curStackTrace := m.stackTrace
+		m.stateMutex.Unlock()
+
 		msg = fmt.Sprintf("mutex.TryLockWithTimeout(%s) failed after %s seconds, locked by goroutine #%d since %s\n%s:%d\n%s",
-			timeout, time.Since(start), m.owner, m.lockedAt.Format(time.RFC3339), m.filename, m.line, m.stackTrace)
+			timeout, time.Since(start), owner, lockedAt.Format(time.RFC3339), filename, curLine, curStackTrace)
 	}
 
 	// final attempt
@@ -178,7 +251,11 @@ func (m *DebugMutex) TryLockWithTimeout(timeout time.Duration) bool {
 		return true
 	}
 
-	if MutexDebugEnabled {
+	globalMutex.RLock()
+	debugEnabled := MutexDebugEnabled
+	globalMutex.RUnlock()
+
+	if debugEnabled {
 		logging.Trace(msg)
 	}
 	return false
@@ -186,6 +263,8 @@ func (m *DebugMutex) TryLockWithTimeout(timeout time.Duration) bool {
 
 // GetOwner returns the ID of the goroutine that currently holds the lock
 func (m *DebugMutex) GetOwner() int64 {
+	m.stateMutex.Lock()
+	defer m.stateMutex.Unlock()
 	if !m.isLocked {
 		return 0
 	}
@@ -194,11 +273,15 @@ func (m *DebugMutex) GetOwner() int64 {
 
 // IsLocked returns whether the mutex is currently locked
 func (m *DebugMutex) IsLocked() bool {
+	m.stateMutex.Lock()
+	defer m.stateMutex.Unlock()
 	return m.isLocked
 }
 
 // LockedAt returns when the mutex was locked
 func (m *DebugMutex) LockedAt() time.Time {
+	m.stateMutex.Lock()
+	defer m.stateMutex.Unlock()
 	return m.lockedAt
 }
 
