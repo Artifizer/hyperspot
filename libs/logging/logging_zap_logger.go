@@ -24,6 +24,9 @@ type zapLogger struct {
 }
 
 func (zl *zapLogger) addToMemory(level Level, msg string, fields ...zap.Field) {
+	zl.mu.Lock()
+	defer zl.mu.Unlock()
+
 	if zl.lastMessagesLimit <= 0 {
 		zl.lastMessages = []any{}
 		return
@@ -32,9 +35,6 @@ func (zl *zapLogger) addToMemory(level Level, msg string, fields ...zap.Field) {
 	if level > zl.level {
 		return
 	}
-
-	zl.mu.Lock()
-	defer zl.mu.Unlock()
 
 	msg = fmt.Sprintf("%s: %s", strings.ToUpper(levelToString(level)), msg)
 
