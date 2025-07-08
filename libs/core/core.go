@@ -48,7 +48,7 @@ func Init(cfg *config.Config) error {
 		return err
 	}
 
-	if err := orm.OrmInit(db.DB); err != nil {
+	if err := orm.OrmInit(db.DB()); err != nil {
 		return fmt.Errorf("failed to initialize ORM: %w", err)
 	}
 
@@ -78,7 +78,7 @@ func makeMigrations() error {
 		if len(module.Migrations) > 0 {
 			logging.Trace("Making migrations for: %s", module.Name)
 			for _, migration := range module.Migrations {
-				err := db.SafeAutoMigrate(db.DB, migration)
+				err := db.SafeAutoMigrate(db.DB(), migration)
 				if err != nil {
 					msg := fmt.Sprintf("failed to make migrations for %s: %s", module.Name, err)
 					logging.Error("%s", msg)

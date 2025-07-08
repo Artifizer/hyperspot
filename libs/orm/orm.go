@@ -160,11 +160,11 @@ func GetGormFieldName(object interface{}, fieldKey string) (string, errorx.Error
 }
 
 func GetBaseQuery(obj interface{}, tenantID uuid.UUID, userID uuid.UUID, request *api.PageAPIRequest) (*gorm.DB, errorx.Error) {
-	if db.DB == nil {
+	if db.DB() == nil {
 		return nil, errorx.NewErrInternalServerError("database not initialized")
 	}
 
-	query := db.DB.Model(obj)
+	query := db.DB().Model(obj)
 
 	if tenantID != uuid.Nil {
 		query = query.Where("tenant_id = ?", tenantID)
@@ -247,10 +247,10 @@ func OrmUpdateObjFields(model interface{}, pkFields map[string]interface{}, upda
 		model = modelValue.Interface()
 	}
 
-	if db.DB == nil {
+	if db.DB() == nil {
 		return errorx.NewErrInternalServerError("database is not initialized")
 	}
-	query := db.DB.Model(model)
+	query := db.DB().Model(model)
 	rv := reflect.ValueOf(model)
 	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
 		return errorx.NewErrInternalServerError(fmt.Sprintf("the model parameter must be a pointer to a struct, got %T", model))
@@ -310,7 +310,7 @@ func OrmGetObjFields(model interface{}, pkFields map[string]interface{}, fields 
 		model = modelValue.Interface()
 	}
 
-	if db.DB == nil {
+	if db.DB() == nil {
 		return errorx.NewErrInternalServerError("database is not initialized")
 	}
 
@@ -357,7 +357,7 @@ func OrmGetObjFields(model interface{}, pkFields map[string]interface{}, fields 
 
 	// Execute the query with retry logic
 	err := RetryWithError(func() error {
-		query := db.DB.Model(model).Select(selectColumns)
+		query := db.DB().Model(model).Select(selectColumns)
 
 		// Add WHERE condition for the primary key
 		for field, value := range pkFields {

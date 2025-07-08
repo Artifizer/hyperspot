@@ -18,8 +18,21 @@ import (
 )
 
 var (
-	DB *gorm.DB
+	mu       utils.DebugMutex
+	dbGlobal *gorm.DB
 )
+
+func DB() *gorm.DB {
+	mu.Lock()
+	defer mu.Unlock()
+	return dbGlobal
+}
+
+func SetDB(db *gorm.DB) {
+	mu.Lock()
+	defer mu.Unlock()
+	dbGlobal = db
+}
 
 // SafeAutoMigrate performs AutoMigrate and ensures DDL operations are fully committed
 // before proceeding. This prevents SQLite race conditions where DDL operations appear
@@ -143,8 +156,8 @@ func newDB() (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(connMaxLifetime)
 
 	if err == nil {
-		if DB == nil {
-			DB = db
+		if DB() == nil {
+			SetDB(db)
 		}
 		logDB(logging.InfoLevel, "Database initialized successfully")
 	}
@@ -172,7 +185,7 @@ func StartDBServer() (*gorm.DB, error) {
 
 // Add transaction helper
 func WithTransaction(fn func(tx *gorm.DB) error) error {
-	return DB.Transaction(func(tx *gorm.DB) error {
+	return DB().Transaction(func(tx *gorm.DB) error {
 		return fn(tx)
 	})
 }
