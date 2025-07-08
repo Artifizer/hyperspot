@@ -52,11 +52,11 @@ type Dataset struct {
 
 func (d *Dataset) DbSave() error {
 	d.UpdatedAtMs = time.Now().UnixMilli()
-	return db.DB.Save(d).Error
+	return db.DB().Save(d).Error
 }
 
 func (d *Dataset) DbDelete() error {
-	return db.DB.Delete(d).Error
+	return db.DB().Delete(d).Error
 }
 
 func (d *Dataset) Reset() {
@@ -183,11 +183,11 @@ func RegisterDataset(d *Dataset) error {
 	logging.Debug(fmt.Sprintf("Registering dataset: %s @ %s", d.Name, d.OriginalURL))
 
 	dInDB := &Dataset{}
-	err := db.DB.Where("name = ?", d.Name).First(dInDB).Error
+	err := db.DB().Where("name = ?", d.Name).First(dInDB).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			d.Reset()
-			err = db.DB.Create(d).Error
+			err = db.DB().Create(d).Error
 			if err != nil {
 				return err
 			}
@@ -247,7 +247,7 @@ func (d *Dataset) IsDownloaded() bool {
 	}
 
 	dInDB := &Dataset{}
-	err = db.DB.Where("name = ?", d.Name).First(dInDB).Error
+	err = db.DB().Where("name = ?", d.Name).First(dInDB).Error
 	if err != nil {
 		return false
 	}
@@ -302,7 +302,7 @@ func (d *Dataset) Download(ctx context.Context, contextJob *job.JobObj) error {
 			return fmt.Errorf("failed to schedule dataset download job: %w", err)
 		}
 	} else {
-		downloadJob, err = job.JEGetJob(ctx, downloadJobId)
+		downloadJob, err = job.JEGetJobByID(ctx, downloadJobId)
 		if err != nil {
 			d.Unlock()
 			return fmt.Errorf("failed to get dataset download job: %w", err)

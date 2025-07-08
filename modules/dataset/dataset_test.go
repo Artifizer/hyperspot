@@ -22,7 +22,7 @@ func setupDatasetTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	testDB, err := db.InitInMemorySQLite(nil)
 	require.NoError(t, err, "Failed to connect to test DB")
-	db.DB = testDB
+	db.SetDB(testDB)
 	err = orm.OrmInit(testDB)
 	require.NoError(t, err, "Failed to initialize ORM for test DB")
 	err = db.SafeAutoMigrate(testDB, &Dataset{})
@@ -45,7 +45,7 @@ func TestDbSave(t *testing.T) {
 
 	// Verify the record is saved using GORM
 	var ds Dataset
-	err = db.DB.First(&ds, "name = ?", "test").Error
+	err = db.DB().First(&ds, "name = ?", "test").Error
 	require.NoError(t, err, "Dataset should be saved in DB")
 	assert.Equal(t, d.Name, ds.Name, "Saved dataset name should match")
 }
@@ -61,7 +61,7 @@ func TestDbDelete(t *testing.T) {
 	require.NoError(t, err, "DbDelete should succeed")
 
 	var ds Dataset
-	err = db.DB.First(&ds, "name = ?", "delete_test").Error
+	err = db.DB().First(&ds, "name = ?", "delete_test").Error
 	assert.Error(t, err, "Record should be deleted and not found")
 	assert.Equal(t, gorm.ErrRecordNotFound, err)
 }
@@ -341,7 +341,7 @@ func TestIsDownloaded(t *testing.T) {
 	d.Size = info.Size()
 	d.Checksum = ""
 	// Insert a record with a different OriginalURL.
-	err = db.DB.Create(&Dataset{Name: "isdl6", OriginalURL: "different_url", LocalPath: tmpFile.Name(), Size: info.Size()}).Error
+	err = db.DB().Create(&Dataset{Name: "isdl6", OriginalURL: "different_url", LocalPath: tmpFile.Name(), Size: info.Size()}).Error
 	require.NoError(t, err)
 	downloaded = d.IsDownloaded()
 	assert.False(t, downloaded, "Original URL mismatch should return false")
@@ -383,6 +383,6 @@ func TestDbSave_Migrations(t *testing.T) {
 	require.NoError(t, err, "DbSave should succeed")
 	// The migration should have created the table for Dataset and persisted the record.
 	var ds Dataset
-	err = db.DB.First(&ds, "name = ?", "migration_test").Error
+	err = db.DB().First(&ds, "name = ?", "migration_test").Error
 	require.NoError(t, err, "Dataset should be retrieved from the migrated DB")
 }
