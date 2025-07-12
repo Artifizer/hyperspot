@@ -34,15 +34,15 @@ type SystemInfo struct {
 	// CPU information
 	CPU struct {
 		Model     string  `json:"model" gorm:"column:cpu_model"`
-		NumCPUs   int     `json:"num_cpus" gorm:"column:cpu_num_cpus"`
-		Cores     int     `json:"cores" gorm:"column:cpu_cores"`
+		NumCPUs   uint    `json:"num_cpus" gorm:"column:cpu_num_cpus"`
+		Cores     uint    `json:"cores" gorm:"column:cpu_cores"`
 		Frequency float64 `json:"frequency_mhz" gorm:"column:cpu_frequency_mhz"`
 	} `json:"cpu" gorm:"embedded"`
 
 	// GPU information
 	GPUs []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	} `json:"gpus" gorm:"serializer:json"`
@@ -64,7 +64,7 @@ type SystemInfo struct {
 	// Battery information
 	Battery struct {
 		OnBattery  bool `json:"on_battery" gorm:"column:on_battery"`
-		Percentage int  `json:"percentage" gorm:"column:battery_percentage"`
+		Percentage uint `json:"percentage" gorm:"column:battery_percentage"`
 	} `json:"battery" gorm:"embedded"`
 }
 
@@ -131,7 +131,7 @@ func getMacGPUInfo(info *SystemInfo) error {
 		if len(match) > 1 {
 			gpu := struct {
 				Model         string  `json:"model" gorm:"column:gpu_model"`
-				Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+				Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 				TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 				UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 			}{
@@ -178,10 +178,14 @@ func CollectSysInfo() (*SystemInfo, error) {
 		return nil, fmt.Errorf("failed to get host info: %w", err)
 	}
 
+	numcpu := runtime.NumCPU()
+
 	info.OS.Name = hostInfo.Platform
 	info.OS.Version = hostInfo.PlatformVersion
 	info.OS.Arch = runtime.GOARCH
-	info.CPU.NumCPUs = runtime.NumCPU()
+	if numcpu > 0 {
+		info.CPU.NumCPUs = uint(numcpu)
+	}
 
 	// CPU information
 	cpuInfo, err := cpu.Info()
@@ -191,7 +195,13 @@ func CollectSysInfo() (*SystemInfo, error) {
 
 	if len(cpuInfo) > 0 {
 		info.CPU.Model = cpuInfo[0].ModelName
-		info.CPU.Cores = int(cpuInfo[0].Cores)
+		if cpuInfo[0].Cores > 0 {
+			// Safely convert int32 to uint, clamping negative values to 0
+			cores := cpuInfo[0].Cores
+			if cores > 0 {
+				info.CPU.Cores = uint(uint32(cores))
+			}
+		}
 		info.CPU.Frequency = float64(cpuInfo[0].Mhz)
 	}
 
@@ -210,11 +220,17 @@ func CollectSysInfo() (*SystemInfo, error) {
 
 	// GPU information
 	if isMacArm() {
-		getMacGPUInfo(info)
+		if err := getMacGPUInfo(info); err != nil {
+			logging.Warn("Failed to get Mac GPU info: %v", err)
+		}
 	} else if isWindows() {
-		getWindowsGPUInfo(info)
+		if err := getWindowsGPUInfo(info); err != nil {
+			logging.Warn("Failed to get Windows GPU info: %v", err)
+		}
 	} else if isUnix() {
-		getNVMLGPUInfo(info)
+		if err := getNVMLGPUInfo(info); err != nil {
+			logging.Warn("Failed to get NVML GPU info: %v", err)
+		}
 	} else {
 		// Not supported for other platforms
 		logging.Warn("GPU information is not supported on this platform")
@@ -246,7 +262,7 @@ func CollectSysInfo() (*SystemInfo, error) {
 		info.Battery.OnBattery = batteries[0].State.Raw == battery.Discharging
 		// Convert current battery capacity to percentage (0-100 range)
 		if batteries[0].Full > 0 {
-			info.Battery.Percentage = int(math.Round((float64(batteries[0].Current) / float64(batteries[0].Full)) * 100))
+			info.Battery.Percentage = uint(math.Round((float64(batteries[0].Current) / float64(batteries[0].Full)) * 100))
 		} else {
 			info.Battery.Percentage = 0
 		}

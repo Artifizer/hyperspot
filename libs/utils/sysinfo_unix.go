@@ -31,7 +31,7 @@ func getNVMLGPUInfo(info *SystemInfo) error {
 
 		gpu := struct {
 			Model         string  `json:"model" gorm:"column:gpu_model"`
-			Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+			Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 			TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 			UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 		}{}
@@ -51,7 +51,7 @@ func getNVMLGPUInfo(info *SystemInfo) error {
 		if utilization, _, err := device.UtilizationRates(); err == nil {
 			// This doesn't actually get cores, but we can use it to indicate the device is working
 			// In a real implementation, you might need to use CUDA API to get actual core count
-			gpu.Cores = int(utilization)
+			gpu.Cores = utilization
 		}
 
 		info.GPUs = append(info.GPUs, gpu)

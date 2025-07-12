@@ -95,7 +95,7 @@ func TestToMapWithGPU(t *testing.T) {
 	// Set GPU fields - now using array of GPUs
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -188,7 +188,7 @@ func TestFormatStringWithGPU(t *testing.T) {
 	// Set GPU fields - now using array of GPUs
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -276,7 +276,7 @@ func TestSystemInfoEdgeCases(t *testing.T) {
 	// Initialize with empty GPUs array
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{}
@@ -307,20 +307,20 @@ func TestSystemInfoEdgeCases(t *testing.T) {
 func TestSystemInfoWithNegativeValues(t *testing.T) {
 	// Test handling of unexpected negative values
 	sysInfo := &SystemInfo{}
-	sysInfo.CPU.Cores = -1
+	sysInfo.CPU.Cores = 0
 	sysInfo.CPU.Frequency = -100
 	sysInfo.Host.Uptime = 0
 
 	// Add a GPU with negative values
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
 		{
 			Model:         "Negative Test GPU",
-			Cores:         -5,
+			Cores:         0,
 			TotalMemoryMB: -1000.0,
 			UsedMemoryMB:  -500.0,
 		},
@@ -329,20 +329,19 @@ func TestSystemInfoWithNegativeValues(t *testing.T) {
 	// This should not panic
 	formatted := sysInfo.FormatString()
 	assert.NotEmpty(t, formatted)
-	assert.NotContains(t, formatted, "CPU Cores: -1")
 	assert.NotContains(t, formatted, "CPU Frequency: -100.00 MHz")
 	assert.Contains(t, formatted, "Uptime: 0 hours")
 	assert.Contains(t, formatted, "GPU #1: Negative Test GPU")
-	assert.NotContains(t, formatted, "Cores: -5")
+	assert.NotContains(t, formatted, "Cores: 0")
 	assert.NotContains(t, formatted, "Total Memory: -1000.00 MB")
 
 	// Map generation should also handle negative values
 	m := sysInfo.ToMap()
-	assert.Equal(t, "-1", m["cpu_cores"])
+	assert.Equal(t, "0", m["cpu_cores"])
 	assert.Equal(t, "-100.00", m["cpu_frequency_mhz"])
 	assert.Equal(t, "0", m["host_uptime_hours"])
 	assert.Equal(t, "Negative Test GPU", m["gpu_0_model"])
-	assert.Equal(t, "-5", m["gpu_0_cores"])
+	assert.Equal(t, "0", m["gpu_0_cores"])
 	assert.Equal(t, "-1000.00", m["gpu_0_total_memory_mb"])
 }
 
@@ -355,7 +354,7 @@ func TestSystemInfoGPUValidation(t *testing.T) {
 	// Set GPU fields with extreme values - using array of GPUs
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -390,7 +389,7 @@ func TestFormatStringSpecialCharacters(t *testing.T) {
 	sysInfo.CPU.Model = "CPU with © symbol"
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -424,7 +423,7 @@ func TestSystemInfoEmptyWithEmptyHostname(t *testing.T) {
 	// Initialize with empty GPUs array
 	sysInfo.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{}
@@ -444,7 +443,7 @@ func TestGPUInformationHandling(t *testing.T) {
 	sysInfo1 := &SystemInfo{}
 	sysInfo1.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -476,13 +475,13 @@ func TestGPUInformationHandling(t *testing.T) {
 	sysInfo2 := &SystemInfo{}
 	sysInfo2.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
 		{
 			Model:         "Test GPU", // Success
-			Cores:         0,          // Failed
+			Cores:         uint(0),    // Failed
 			TotalMemoryMB: 0.0,        // Failed
 			UsedMemoryMB:  0.0,
 		},
@@ -500,7 +499,7 @@ func TestGPUInformationHandling(t *testing.T) {
 	sysInfo3 := &SystemInfo{}
 	sysInfo3.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
@@ -525,7 +524,7 @@ func TestGPUInformationHandling(t *testing.T) {
 	sysInfo4 := &SystemInfo{}
 	sysInfo4.GPUs = []struct {
 		Model         string  `json:"model" gorm:"column:gpu_model"`
-		Cores         int     `json:"cores" gorm:"column:gpu_cores"`
+		Cores         uint    `json:"cores" gorm:"column:gpu_cores"`
 		TotalMemoryMB float64 `json:"total_memory_mb" gorm:"column:gpu_total_memory_mb"`
 		UsedMemoryMB  float64 `json:"used_memory_mb" gorm:"column:gpu_used_memory_mb"`
 	}{
