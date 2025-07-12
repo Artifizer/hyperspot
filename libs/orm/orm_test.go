@@ -458,7 +458,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 	db.StartDBServer()
 
 	// Migrate test tables first
-	if err := db.DB.AutoMigrate(&SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
+	if err := db.SafeAutoMigrate(db.DB, &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
 		t.Fatalf("Failed to migrate test tables: %v", err)
 	}
 
@@ -585,5 +585,202 @@ func TestOrmUpdateObjFields(t *testing.T) {
 		name := "Updated"
 		err := OrmUpdateObjFields(obj, map[string]interface{}{"id": obj.ID}, name)
 		assert.Error(t, err)
+	})
+}
+
+// TestOrmGetObjFields verifies that OrmGetObjFields correctly retrieves specific fields
+func TestOrmGetObjFields(t *testing.T) {
+	// Ensure database is initialized
+	db.ConfigDatabaseInstance = &db.ConfigDatabase{
+		Type: "memory",
+	}
+	db.StartDBServer()
+
+	// Migrate test tables first
+	if err := db.SafeAutoMigrate(db.DB, &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
+		t.Fatalf("Failed to migrate test tables: %v", err)
+	}
+
+	t.Run("GetSingleField", func(t *testing.T) {
+		// Create a test record
+		obj := &SimpleStruct{
+			TenantID:  uuid.New(),
+			ID:        "test-get-id-1",
+			Name:      "Test Name",
+			CreatedAt: time.Now(),
+		}
+
+		err := db.DB.Create(obj).Error
+		require.NoError(t, err)
+
+		// Create a new object to get fields into
+		fetchObj := &SimpleStruct{
+			TenantID: obj.TenantID,
+			ID:       obj.ID,
+		}
+
+		// Call OrmGetObjFields to get only the name field
+		err = OrmGetObjFields(fetchObj, map[string]interface{}{"id": obj.ID}, &fetchObj.Name)
+		require.NoError(t, err)
+
+		// Verify only the name was fetched
+		assert.Equal(t, "Test Name", fetchObj.Name)
+		// CreatedAt should be zero since we didn't fetch it
+		assert.True(t, fetchObj.CreatedAt.IsZero())
+	})
+
+	t.Run("GetMultipleFields", func(t *testing.T) {
+		// Create a test record
+		testTime := time.Now().Truncate(time.Second) // Truncate to avoid precision issues
+		obj := &SimpleStruct{
+			TenantID:  uuid.New(),
+			ID:        "test-get-id-2",
+			Name:      "Multiple Fields Test",
+			CreatedAt: testTime,
+		}
+
+		err := db.DB.Create(obj).Error
+		require.NoError(t, err)
+
+		// Create a new object to get fields into
+		fetchObj := &SimpleStruct{
+			TenantID: obj.TenantID,
+			ID:       obj.ID,
+		}
+
+		// Call OrmGetObjFields to get multiple fields
+		err = OrmGetObjFields(fetchObj, map[string]interface{}{"id": obj.ID}, &fetchObj.Name, &fetchObj.CreatedAt)
+		require.NoError(t, err)
+
+		// Verify both fields were fetched
+		assert.Equal(t, "Multiple Fields Test", fetchObj.Name)
+		assert.Equal(t, testTime.Unix(), fetchObj.CreatedAt.Unix())
+	})
+
+	t.Run("GetWithColumnOverride", func(t *testing.T) {
+		// Create a test record with custom column names
+		obj := &StructWithColumnOverride{
+			ID:           "test-get-id-3",
+			Name:         "Custom Column Test",
+			InternalData: "Internal Test Data",
+			IgnoredField: "Ignored",
+		}
+
+		err := db.DB.Create(obj).Error
+		require.NoError(t, err)
+
+		// Create a new object to get fields into
+		fetchObj := &StructWithColumnOverride{
+			ID: obj.ID,
+		}
+
+		// Call OrmGetObjFields with fields that have custom column names
+		err = OrmGetObjFields(fetchObj, map[string]interface{}{"id": obj.ID}, &fetchObj.Name, &fetchObj.InternalData)
+		require.NoError(t, err)
+
+		// Verify the fields were fetched with correct column names
+		assert.Equal(t, "Custom Column Test", fetchObj.Name)
+		assert.Equal(t, "Internal Test Data", fetchObj.InternalData)
+		// IgnoredField should be empty since we didn't fetch it
+		assert.Empty(t, fetchObj.IgnoredField)
+	})
+
+	t.Run("GetWithCompositePrimaryKey", func(t *testing.T) {
+		// Create a test record
+		obj := &SimpleStruct{
+			TenantID:  uuid.New(),
+			ID:        "test-get-id-4",
+			Name:      "Composite Key Test",
+			CreatedAt: time.Now(),
+		}
+
+		err := db.DB.Create(obj).Error
+		require.NoError(t, err)
+
+		// Create a new object to get fields into
+		fetchObj := &SimpleStruct{}
+
+		// Call OrmGetObjFields with composite primary key
+		err = OrmGetObjFields(fetchObj, map[string]interface{}{
+			"id":        obj.ID,
+			"tenant_id": obj.TenantID,
+		}, &fetchObj.Name)
+		require.NoError(t, err)
+
+		// Verify the field was fetched
+		assert.Equal(t, "Composite Key Test", fetchObj.Name)
+	})
+
+	t.Run("ErrorOnNonExistentRecord", func(t *testing.T) {
+		// Create an object for non-existent record
+		fetchObj := &SimpleStruct{}
+
+		// Call OrmGetObjFields with non-existent ID
+		err := OrmGetObjFields(fetchObj, map[string]interface{}{"id": "non-existent-id"}, &fetchObj.Name)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "record not found")
+	})
+
+	t.Run("ErrorOnInvalidModel", func(t *testing.T) {
+		// Test with non-pointer model
+		simpleStruct := SimpleStruct{}
+		err := OrmGetObjFields(simpleStruct, map[string]interface{}{"id": "test"}, &simpleStruct.Name)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "the model parameter must be a pointer to a struct")
+
+		// Test with nil model
+		err = OrmGetObjFields(nil, map[string]interface{}{"id": "test"}, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "the model parameter must be a pointer to a struct")
+	})
+
+	t.Run("ErrorOnMissingPrimaryKey", func(t *testing.T) {
+		obj := &SimpleStruct{
+			Name: "Test",
+		}
+
+		// Call without primary key
+		err := OrmGetObjFields(obj, map[string]interface{}{}, &obj.Name)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "primary key field is required for get")
+	})
+
+	t.Run("ErrorOnNonPointerGetField", func(t *testing.T) {
+		obj := &SimpleStruct{
+			ID:   "test-get-id-5",
+			Name: "Test",
+		}
+
+		// Call with non-pointer get field
+		name := "Updated"
+		err := OrmGetObjFields(obj, map[string]interface{}{"id": obj.ID}, name)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "field parameter must be a pointer")
+	})
+
+	t.Run("ErrorOnInvalidField", func(t *testing.T) {
+		obj := &SimpleStruct{
+			ID:   "test-get-id-6",
+			Name: "Test",
+		}
+
+		// Create a pointer to a field that doesn't belong to the model
+		invalidField := "invalid"
+		err := OrmGetObjFields(obj, map[string]interface{}{"id": obj.ID}, &invalidField)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "field not found for get parameter")
+	})
+
+	t.Run("ErrorOnUnsupportedFieldType", func(t *testing.T) {
+		obj := &SimpleStruct{
+			ID:   "test-get-id-7",
+			Name: "Test",
+		}
+
+		// Test with unsupported field type (function pointer)
+		var fn func()
+		err := OrmGetObjFields(obj, map[string]interface{}{"id": obj.ID}, &fn)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "field not found for get parameter")
 	})
 }

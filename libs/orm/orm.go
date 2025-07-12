@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"github.com/hypernetix/hyperspot/libs/auth"
 	"github.com/hypernetix/hyperspot/libs/db"
 	"github.com/hypernetix/hyperspot/libs/errorx"
+	"github.com/hypernetix/hyperspot/libs/logging"
 	"gorm.io/gorm"
 )
 
@@ -23,7 +25,10 @@ func OrmInit(db *gorm.DB) error {
 			return
 		}
 		if _, exists := db.Statement.Clauses["LIMIT"]; exists {
-			db.AddError(fmt.Errorf("LIMIT clause is not supported for UPDATE operations, use OrmUpdateObjs() instead"))
+			if err := db.AddError(fmt.Errorf("LIMIT clause is not supported for UPDATE operations, use OrmUpdateObjs() instead")); err != nil {
+				// Log the error but continue since this is a callback
+				logging.Error("Failed to add error to database: %v", err)
+			}
 			return
 		}
 	})
@@ -37,7 +42,10 @@ func OrmInit(db *gorm.DB) error {
 			return
 		}
 		if _, exists := db.Statement.Clauses["LIMIT"]; exists {
-			db.AddError(fmt.Errorf("LIMIT clause is not supported for DELETE operations, use OrmDeleteObjs() instead"))
+			if err := db.AddError(fmt.Errorf("LIMIT clause is not supported for DELETE operations, use OrmDeleteObjs() instead")); err != nil {
+				// Log the error but continue since this is a callback
+				logging.Error("Failed to add error to database: %v", err)
+			}
 			return
 		}
 	})
@@ -288,6 +296,86 @@ func OrmUpdateObjFields(model interface{}, pkFields map[string]interface{}, upda
 	return RetryWithError(func() error {
 		return query.Updates(updateMap).Error
 	}, DefaultRetryConfig())
+}
+
+// OrmGetObjFields accepts a model and a variable list of pointers to fields that need to be populated.
+// It uses reflection to determine the corresponding GORM column name for each field,
+// builds a select list, and performs the query via GORM with automatic retry for database locks.
+// The model should already contain the primary key values for the WHERE condition.
+func OrmGetObjFields(model interface{}, pkFields map[string]interface{}, fields ...interface{}) errorx.Error {
+	// Recursively unwrap pointers until we get to a pointer to a struct
+	modelValue := reflect.ValueOf(model)
+	for modelValue.Kind() == reflect.Ptr && modelValue.Elem().Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+		model = modelValue.Interface()
+	}
+
+	if db.DB == nil {
+		return errorx.NewErrInternalServerError("database is not initialized")
+	}
+
+	rv := reflect.ValueOf(model)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+		return errorx.NewErrInternalServerError(fmt.Sprintf("the model parameter must be a pointer to a struct, got %T", model))
+	}
+	st := rv.Elem()
+	typ := st.Type()
+
+	// Build list of columns to select
+	var selectColumns []string
+
+	// Loop through each provided field pointer to validate and build select list
+	for _, fieldPtr := range fields {
+		fVal := reflect.ValueOf(fieldPtr)
+		if fVal.Kind() != reflect.Ptr {
+			return errorx.NewErrInternalServerError("field parameter must be a pointer")
+		}
+
+		// Try to find the field in the struct hierarchy
+		found := false
+		fieldInfo, err := findFieldByPointer(st, typ, fieldPtr)
+		if err == nil {
+			found = true
+			gormTag := fieldInfo.Tag.Get("gorm")
+			colName := parseGormColumnName(gormTag, fieldInfo.Name)
+			selectColumns = append(selectColumns, colName)
+		}
+
+		if !found {
+			return errorx.NewErrBadRequest(fmt.Sprintf("field not found for get parameter: %v", fieldPtr))
+		}
+	}
+
+	if len(selectColumns) == 0 {
+		return errorx.NewErrBadRequest("no valid fields specified for retrieval")
+	}
+
+	// Validate and add the primary key WHERE condition
+	if len(pkFields) == 0 {
+		return errorx.NewErrInternalServerError("primary key field is required for get")
+	}
+
+	// Execute the query with retry logic
+	err := RetryWithError(func() error {
+		query := db.DB.Model(model).Select(selectColumns)
+
+		// Add WHERE condition for the primary key
+		for field, value := range pkFields {
+			query = query.Where(field+" = ?", value)
+		}
+
+		err := query.First(model).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errorx.NewErrNotFound("record not found")
+			}
+			return err
+		}
+
+		return nil
+	}, DefaultRetryConfig())
+
+	return err
 }
 
 // findFieldByPointer recursively searches for a field matching the given pointer
