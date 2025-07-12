@@ -35,7 +35,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err, "Failed to connect to test DB")
 	db.DB = testDB
 	OrmInit(testDB)
-	err = testDB.AutoMigrate(&TestDeleteStruct{}, &TestUpdateStruct{})
+	err = db.SafeAutoMigrate(testDB, &TestDeleteStruct{}, &TestUpdateStruct{})
 	require.NoError(t, err, "Failed to migrate test database")
 
 	logging.ForceLogLevel(logging.TraceLevel)

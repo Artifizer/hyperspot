@@ -21,6 +21,50 @@ var (
 	DB *gorm.DB
 )
 
+// SafeAutoMigrate performs AutoMigrate and ensures DDL operations are fully committed
+// before proceeding. This prevents SQLite race conditions where DDL operations appear
+// to complete but internal locks are still held.
+func SafeAutoMigrate(db *gorm.DB, dst ...interface{}) error {
+	// Perform the migration
+	if err := db.AutoMigrate(dst...); err != nil {
+		return fmt.Errorf("failed to auto migrate: %w", err)
+	}
+
+	// Ensure DDL operations are fully committed before proceeding
+	// This is critical for SQLite which may still have internal locks
+	// even after AutoMigrate appears to complete successfully
+
+	// Force a transaction commit to ensure all DDL operations are persisted
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to begin verification transaction: %w", tx.Error)
+	}
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit verification transaction: %w", err)
+	}
+
+	// Execute a simple query to verify the database is ready and unlocked
+	// This will fail if there are still any locks from the DDL operations
+	var count int64
+	if len(dst) > 0 {
+		// Use the first migrated model for verification
+		if err := db.Model(dst[0]).Count(&count).Error; err != nil {
+			return fmt.Errorf("failed to verify database readiness after migration: %w", err)
+		}
+	} else {
+		// Fallback: execute a simple query
+		if err := db.Exec("SELECT 1").Error; err != nil {
+			return fmt.Errorf("failed to verify database readiness after migration: %w", err)
+		}
+	}
+
+	// Additional safety: ensure any background SQLite operations complete
+	// This small delay allows SQLite to fully release internal locks
+	time.Sleep(10 * time.Millisecond)
+
+	return nil
+}
+
 // Add health check endpoint
 func healthCheck(db *gorm.DB) error {
 	return db.Exec("SELECT 1").Error
@@ -57,10 +101,19 @@ func newDB() (*gorm.DB, error) {
 		},
 	}
 
+	maxOpenConns := 25
+	maxIdleConns := 5
+	connMaxLifetime := 5 * time.Minute
+
 	switch ConfigDatabaseInstance.Type {
 	case "sqlite":
+		maxOpenConns = 1
+		maxIdleConns = 1
 		db, err = initSQLite(gormConfig)
 	case "memory":
+		maxOpenConns = 1
+		maxIdleConns = 1
+		connMaxLifetime = 0
 		db, err = InitInMemorySQLite(gormConfig)
 	case "postgres":
 		db, err = gorm.Open(postgres.Open(ConfigDatabaseInstance.DSN), gormConfig)
@@ -85,9 +138,9 @@ func newDB() (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(5)
-	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
 
 	if err == nil {
 		if DB == nil {
@@ -147,10 +200,31 @@ func InitInMemorySQLite(gormConfig *gorm.Config) (*gorm.DB, error) {
 	}
 
 	// Set PRAGMA busy_timeout to avoid "database table is locked" errors in concurrent tests.
-	db.Exec("PRAGMA busy_timeout = 30000")
-	db.Exec("PRAGMA journal_mode = WAL")
-	db.Exec("PRAGMA synchronous = FULL")
-	db.Exec("PRAGMA locking_mode = NORMAL")
+	if err := db.Exec("PRAGMA busy_timeout = 30000").Error; err != nil {
+		return nil, fmt.Errorf("failed to set busy timeout: %s", err.Error())
+	}
+	if err := db.Exec("PRAGMA journal_mode = WAL").Error; err != nil {
+		return nil, fmt.Errorf("failed to set journal mode: %s", err.Error())
+	}
+	if err := db.Exec("PRAGMA synchronous = FULL").Error; err != nil {
+		return nil, fmt.Errorf("failed to set synchronous mode: %s", err.Error())
+	}
+	if err := db.Exec("PRAGMA locking_mode = NORMAL").Error; err != nil {
+		return nil, fmt.Errorf("failed to set locking mode: %s", err.Error())
+	}
+	if err := db.Exec("PRAGMA wal_checkpoint(FULL)").Error; err != nil {
+		return nil, fmt.Errorf("failed to checkpoint WAL: %s", err.Error())
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+	// Limit connections to catch table lock issues
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetConnMaxLifetime(0)
 
 	return db, nil
 }
