@@ -204,3 +204,218 @@ func TestCaptureStack(t *testing.T) {
 	// Ensure it contains some expected function call patterns
 	assert.Contains(t, stack, "testing.tRunner")
 }
+
+func TestDebugMutex_TryLockWithTimeout(t *testing.T) {
+	// Test with debug disabled
+	MutexDebugEnabled = false
+
+	t.Run("SuccessImmediatelyAvailable", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock should be acquired immediately
+		success := m.TryLockWithTimeout(100 * time.Millisecond)
+		assert.True(t, success)
+
+		// Should be able to unlock
+		m.Unlock()
+	})
+
+	t.Run("SuccessAfterShortWait", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex in a goroutine and release it after 50ms
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Lock()
+			time.Sleep(50 * time.Millisecond)
+			m.Unlock()
+		}()
+
+		// Wait for goroutine to acquire the lock
+		time.Sleep(10 * time.Millisecond)
+
+		// Try to lock with timeout longer than the hold time
+		success := m.TryLockWithTimeout(200 * time.Millisecond)
+		assert.True(t, success)
+
+		// Clean up
+		m.Unlock()
+		wg.Wait()
+	})
+
+	t.Run("TimeoutExpired", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex in a goroutine and hold it longer than timeout
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Lock()
+			time.Sleep(200 * time.Millisecond)
+			m.Unlock()
+		}()
+
+		// Wait for goroutine to acquire the lock
+		time.Sleep(10 * time.Millisecond)
+
+		// Try to lock with timeout shorter than the hold time
+		start := time.Now()
+		success := m.TryLockWithTimeout(50 * time.Millisecond)
+		elapsed := time.Since(start)
+
+		assert.False(t, success)
+		// Should have waited approximately the timeout duration
+		assert.True(t, elapsed >= 50*time.Millisecond)
+		assert.True(t, elapsed < 100*time.Millisecond) // Allow some tolerance
+
+		wg.Wait()
+	})
+
+	t.Run("ZeroTimeout", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex
+		m.Lock()
+
+		// Try to lock with zero timeout - should fail immediately
+		start := time.Now()
+		success := m.TryLockWithTimeout(0)
+		elapsed := time.Since(start)
+
+		assert.False(t, success)
+		// Should return very quickly (less than 10ms)
+		assert.True(t, elapsed < 10*time.Millisecond)
+
+		m.Unlock()
+	})
+
+	t.Run("VeryLongTimeout", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock should be acquired immediately even with long timeout
+		start := time.Now()
+		success := m.TryLockWithTimeout(10 * time.Second)
+		elapsed := time.Since(start)
+
+		assert.True(t, success)
+		// Should return very quickly (less than 10ms)
+		assert.True(t, elapsed < 10*time.Millisecond)
+
+		m.Unlock()
+	})
+
+	// Test with debug enabled
+	MutexDebugEnabled = true
+
+	t.Run("DebugEnabledSuccess", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock should be acquired immediately
+		success := m.TryLockWithTimeout(100 * time.Millisecond)
+		assert.True(t, success)
+
+		// Debug info should be populated
+		assert.True(t, m.IsLocked())
+		assert.Equal(t, getGoID(), m.GetOwner())
+		assert.False(t, m.LockedAt().IsZero())
+
+		m.Unlock()
+
+		// Debug info should be cleared
+		assert.False(t, m.IsLocked())
+		assert.Equal(t, int64(0), m.GetOwner())
+		assert.True(t, m.LockedAt().IsZero())
+	})
+
+	t.Run("DebugEnabledTimeout", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex in a goroutine
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Lock()
+			time.Sleep(200 * time.Millisecond)
+			m.Unlock()
+		}()
+
+		// Wait for goroutine to acquire the lock
+		time.Sleep(10 * time.Millisecond)
+
+		// Try to lock with timeout - should fail and log trace message
+		success := m.TryLockWithTimeout(50 * time.Millisecond)
+		assert.False(t, success)
+
+		wg.Wait()
+	})
+
+	t.Run("ConcurrentTryLockWithTimeout", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex initially
+		m.Lock()
+
+		const numGoroutines = 5
+		var wg sync.WaitGroup
+		results := make([]bool, numGoroutines)
+
+		// Start multiple goroutines trying to acquire with timeout
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				results[index] = m.TryLockWithTimeout(100 * time.Millisecond)
+				if results[index] {
+					// If we got the lock, hold it for a bit to prevent others from succeeding
+					time.Sleep(150 * time.Millisecond)
+					m.Unlock()
+				}
+			}(i)
+		}
+
+		// Release the lock after 50ms
+		time.Sleep(50 * time.Millisecond)
+		m.Unlock()
+
+		// Wait for all goroutines to complete
+		wg.Wait()
+
+		// Exactly one goroutine should have succeeded
+		successCount := 0
+		for _, result := range results {
+			if result {
+				successCount++
+			}
+		}
+		assert.Equal(t, 1, successCount)
+	})
+
+	t.Run("FinalAttemptSuccess", func(t *testing.T) {
+		m := DebugMutex{}
+
+		// Lock the mutex in a goroutine and release it exactly at timeout
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Lock()
+			// Release just before the timeout + final attempt
+			time.Sleep(55 * time.Millisecond)
+			m.Unlock()
+		}()
+
+		// Wait for goroutine to acquire the lock
+		time.Sleep(10 * time.Millisecond)
+
+		// Try to lock with timeout - should succeed on final attempt
+		success := m.TryLockWithTimeout(50 * time.Millisecond)
+		assert.True(t, success)
+
+		m.Unlock()
+		wg.Wait()
+	})
+}

@@ -109,7 +109,7 @@ func (m *DebugMutex) Unlock() {
 	// Check if the mutex is being unlocked by a different goroutine
 	if m.isLocked && m.owner != currentGoID {
 		_, filename, line, _ := runtime.Caller(1)
-		logging.Error("Mutex unlocked by goroutine %d at %s:%d\n%s\nbut was locked by goroutine %d @ %s:%d\n%s",
+		logging.Error("Mutex unlocked by goroutine %d at %s:%d\n%s\nbut was locked by goroutine #%d @ %s:%d\n%s",
 			currentGoID, filename, line, captureStack(), m.owner, m.filename, m.line, m.stackTrace)
 		// Continue anyway to match sync.Mutex behavior
 	}
@@ -135,11 +135,11 @@ func (m *DebugMutex) TryLock() bool {
 	_, file, line, _ := runtime.Caller(1)
 
 	// Check for self-deadlock (same goroutine already holds the lock)
-	if m.isLocked && m.owner == currentGoID {
-		logging.Error("Potential deadlock detected - goroutine %d attempting to lock mutex at:\n%s:%d\n%s\nthat it already holds at:\n%s:%d\n%s",
-			currentGoID, file, line, captureStack(), m.filename, m.line, m.stackTrace)
-		// Continue anyway to match sync.Mutex behavior
-	}
+	// if m.isLocked && m.owner == currentGoID {
+	//	logging.Error("Potential deadlock detected - goroutine %d attempting to lock mutex at:\n%s:%d\n%s\nthat it already holds at:\n%s:%d\n%s",
+	//		currentGoID, file, line, captureStack(), m.filename, m.line, m.stackTrace)
+	//	// Continue anyway to match sync.Mutex behavior
+	// }
 
 	// Try to acquire the lock without blocking
 	if !m.Mutex.TryLock() {
@@ -154,6 +154,34 @@ func (m *DebugMutex) TryLock() bool {
 	m.lockedAt = time.Now()
 	m.stackTrace = captureStack()
 	return true
+}
+
+func (m *DebugMutex) TryLockWithTimeout(timeout time.Duration) bool {
+	start := time.Now()
+
+	for time.Since(start) < timeout {
+		if m.TryLock() {
+			return true
+		}
+		// Small sleep to avoid busy waiting
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	var msg string
+	if MutexDebugEnabled {
+		msg = fmt.Sprintf("mutex.TryLockWithTimeout(%s) failed after %s seconds, locked by goroutine #%d since %s\n%s:%d\n%s",
+			timeout, time.Since(start), m.owner, m.lockedAt.Format(time.RFC3339), m.filename, m.line, m.stackTrace)
+	}
+
+	// final attempt
+	if m.TryLock() {
+		return true
+	}
+
+	if MutexDebugEnabled {
+		logging.Trace(msg)
+	}
+	return false
 }
 
 // GetOwner returns the ID of the goroutine that currently holds the lock
@@ -181,7 +209,10 @@ func getGoID() int64 {
 	idStr := strings.TrimPrefix(string(buf[:n]), "goroutine ")
 	idStr = strings.TrimSpace(strings.Split(idStr, " ")[0])
 	id := int64(0)
-	fmt.Sscanf(idStr, "%d", &id)
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		logging.Warn("Failed to parse goroutine ID from '%s': %v", idStr, err)
+		id = 0
+	}
 	return id
 }
 
