@@ -37,7 +37,9 @@ func SaveUploadedTempFile(file multipart.File, tempdir string, filename string) 
 	// Copy the uploaded file content to the temporary file
 	size, err := io.Copy(tempFile, file)
 	if err != nil {
-		os.Remove(tempFile.Name()) // Clean up on error
+		if removeErr := os.Remove(tempFile.Name()); removeErr != nil {
+			logging.Warn("Failed to remove temp file %s: %v", tempFile.Name(), removeErr)
+		}
 		return "", fmt.Errorf("failed to copy file content: %v", err)
 	}
 
