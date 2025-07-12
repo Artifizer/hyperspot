@@ -189,6 +189,42 @@ func (e *ErrUnsupportedMediaType) GetStatus() int {
 	return http.StatusUnsupportedMediaType
 }
 
+// Locked (423)
+
+type ErrLocked struct {
+	baseErrorImpl
+}
+
+func NewErrLocked(msg string, args ...any) Error {
+	return &ErrLocked{baseErrorImpl{err: fmt.Errorf(msg, args...)}}
+}
+
+func (e *ErrLocked) HumaError() huma.StatusError {
+	return huma.NewError(http.StatusLocked, e.Error())
+}
+
+func (e *ErrLocked) GetStatus() int {
+	return http.StatusLocked
+}
+
+// Canceled (499)
+
+type ErrCanceled struct {
+	baseErrorImpl
+}
+
+func NewErrCanceled(msg string, args ...any) Error {
+	return &ErrCanceled{baseErrorImpl{err: fmt.Errorf(msg, args...)}}
+}
+
+func (e *ErrCanceled) HumaError() huma.StatusError {
+	return huma.NewError(499, e.Error())
+}
+
+func (e *ErrCanceled) GetStatus() int {
+	return 499
+}
+
 //
 // Server errors (5xx)
 //
@@ -227,4 +263,22 @@ func (e *ErrNotImplemented) HumaError() huma.StatusError {
 
 func (e *ErrNotImplemented) GetStatus() int {
 	return http.StatusNotImplemented
+}
+
+// Timeout (504)
+
+type ErrTimeout struct {
+	baseErrorImpl
+}
+
+func NewErrTimeout(msg string, args ...any) Error {
+	return &ErrTimeout{baseErrorImpl{err: fmt.Errorf(msg, args...)}}
+}
+
+func (e *ErrTimeout) HumaError() huma.StatusError {
+	return huma.NewError(http.StatusGatewayTimeout, e.Error())
+}
+
+func (e *ErrTimeout) GetStatus() int {
+	return http.StatusGatewayTimeout
 }
