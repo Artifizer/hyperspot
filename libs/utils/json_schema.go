@@ -179,6 +179,14 @@ func GenerateNestedSchemaForGETString(v interface{}) string {
 // It uses huma registry to possibly create references for nested structs. The schema that
 // is returned can then be passed to `huma.Validate` to efficiently validate incoming requests.
 func GenerateSchemaForPOSTPUT(v interface{}) *huma.Schema {
+	// Handle nil input
+	if v == nil {
+		// Return a simple empty object schema
+		return &huma.Schema{
+			Type: "object",
+		}
+	}
+
 	// Get the underlying type.
 	t := reflect.TypeOf(v)
 	if t.Kind() == reflect.Ptr {
@@ -192,6 +200,11 @@ func GenerateSchemaForPOSTPUT(v interface{}) *huma.Schema {
 
 // The same as GenerateSchemaForPOSTPUT but returns string representation of JSON
 func GenerateSchemaForPOSTPUTString(v interface{}) string {
+	// Handle nil input directly to avoid unnecessary function call
+	if v == nil {
+		return `{"type":"object"}`
+	}
+
 	schema := GenerateSchemaForPOSTPUT(v)
 	schemaJSON, err := json.MarshalIndent(schema, "", "  ")
 	if err != nil {

@@ -82,6 +82,7 @@ func TestGenerateNestedSchemaForGET(t *testing.T) {
 }
 
 func TestGenerateSchemaForPOSTPUT(t *testing.T) {
+	// Test with a regular struct
 	testStruct := SchemaTestStruct{}
 	testStruct.Nested.Field3 = 42
 	schema := GenerateSchemaForPOSTPUT(testStruct)
@@ -105,6 +106,18 @@ func TestGenerateSchemaForPOSTPUT(t *testing.T) {
 	assert.NotContains(t, nested.Properties, "field1")
 	assert.NotContains(t, nested.Properties, "field2")
 	assert.NotContains(t, nested.Properties, "field3")
+
+	// Test with nil parameter
+	nilSchema := GenerateSchemaForPOSTPUT(nil)
+
+	// Verify schema is not nil
+	assert.NotNil(t, nilSchema)
+
+	// Verify schema type is "object"
+	assert.Equal(t, "object", nilSchema.Type)
+
+	// Verify schema has no properties
+	assert.Nil(t, nilSchema.Properties)
 }
 
 func TestGenerateNestedSchemaForPOSTPUT(t *testing.T) {
@@ -140,23 +153,36 @@ func TestGenerateNestedSchemaForPOSTPUT(t *testing.T) {
 func TestSchemaStringFunctions(t *testing.T) {
 	testStruct := SchemaTestStruct{}
 
-	// Test GET schema string
-	getSchemaStr := GenerateSchemaForGETString(testStruct)
-	assert.NotEmpty(t, getSchemaStr)
+	// Test GenerateSchemaForGETString
+	schemaStr := GenerateSchemaForGETString(testStruct)
+	assert.NotEmpty(t, schemaStr)
 
-	// Verify it's valid JSON
-	var getSchema map[string]interface{}
-	err := json.Unmarshal([]byte(getSchemaStr), &getSchema)
+	// Test GenerateNestedSchemaForGETString
+	schemaStr = GenerateNestedSchemaForGETString(testStruct)
+	assert.NotEmpty(t, schemaStr)
+
+	// Test GenerateSchemaForPOSTPUTString
+	schemaStr = GenerateSchemaForPOSTPUTString(testStruct)
+	assert.NotEmpty(t, schemaStr)
+
+	// Test GenerateNestedSchemaForPOSTPUTString
+	schemaStr = GenerateNestedSchemaForPOSTPUTString(testStruct)
+	assert.NotEmpty(t, schemaStr)
+
+	// Test GenerateSchemaForPOSTPUTString with nil
+	nilSchemaStr := GenerateSchemaForPOSTPUTString(nil)
+	assert.Equal(t, `{"type":"object"}`, nilSchemaStr)
+
+	// Verify JSON format for regular schema
+	var jsonObj map[string]interface{}
+	err := json.Unmarshal([]byte(schemaStr), &jsonObj)
 	assert.NoError(t, err)
 
-	// Test POST schema string
-	postSchemaStr := GenerateSchemaForPOSTPUTString(testStruct)
-	assert.NotEmpty(t, postSchemaStr)
-
-	// Verify it's valid JSON
-	var postSchema map[string]interface{}
-	err = json.Unmarshal([]byte(postSchemaStr), &postSchema)
+	// Verify JSON format for nil schema
+	var nilJsonObj map[string]interface{}
+	err = json.Unmarshal([]byte(nilSchemaStr), &nilJsonObj)
 	assert.NoError(t, err)
+	assert.Equal(t, "object", nilJsonObj["type"])
 }
 
 func TestValidateJSONAgainstSchemaOnGet(t *testing.T) {
