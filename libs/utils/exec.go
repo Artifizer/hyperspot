@@ -65,7 +65,9 @@ func NewLineBuffer(ctx context.Context) *LineBuffer {
 
 func (lb *LineBuffer) CloseAndGetLines() []string {
 	if atomic.CompareAndSwapInt32(&lb.closed, 0, 1) {
-		lb.rWriter.Close()
+		if err := lb.rWriter.Close(); err != nil {
+			logging.Error("Failed to close pipe writer: %v", err)
+		}
 	}
 
 	// Wait for the scanner to finish processing
