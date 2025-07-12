@@ -9,13 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"errors"
 
 	"github.com/hypernetix/hyperspot/libs/core"
-	"github.com/hypernetix/hyperspot/libs/logging"
 	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
@@ -299,7 +299,7 @@ func (c *BaseAPIClient) doRequestAndParse(ctx context.Context, method string, pa
 		upstreamResp, err = c.Request(ctx, method, path, api_key, body, true)
 	}
 	if upstreamResp == nil {
-		logging.Debug("Upstream request '%s %s%s' failed: %s", method, c.baseUrl, path, err)
+		logger.Debug("Upstream request '%s %s%s' failed: %s", method, c.baseUrl, path, err)
 		c.SetUpstreamLikelyIsOffline(ctx)
 		return nil, err
 	}
@@ -380,9 +380,9 @@ func (c *BaseAPIClient) SetUpstreamLikelyIsOnline() {
 
 	if !c.likelyIsOnline {
 		if c.lastAlive.IsZero() {
-			logging.Info("The %s has been discovered", c.GetFullName())
+			logger.Info("The %s has been discovered", c.GetFullName())
 		} else {
-			logging.Info("The %s is back online", c.GetFullName())
+			logger.Info("The %s is back online", c.GetFullName())
 		}
 		c.likelyIsOnline = true
 	}
@@ -402,7 +402,7 @@ func (c *BaseAPIClient) SetUpstreamLikelyIsOffline(ctx context.Context) {
 		c.likelyIsOnline = false
 		c.mutex.Unlock()
 
-		logging.Warn("The %s service is likely offline", c.GetFullName())
+		logger.Warn("The %s service is likely offline @ stack: %s", c.GetFullName(), string(debug.Stack()))
 	}
 
 	c.StartOnlineWatchdog(ctx)
