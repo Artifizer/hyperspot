@@ -344,6 +344,11 @@ func setDefaults(v *viper.Viper) {
 // GetDefault returns the default configuration
 // addNestedComponent adds a component to a nested map structure based on the given path parts
 func addNestedComponent(baseMap map[string]interface{}, parts []string, value interface{}) {
+	if len(parts) == 0 {
+		// No parts left, this shouldn't happen but handle gracefully
+		return
+	}
+
 	if len(parts) == 1 {
 		baseMap[parts[0]] = value
 		return
@@ -369,7 +374,9 @@ func addNestedComponent(baseMap map[string]interface{}, parts []string, value in
 	}
 
 	// Recursively add to the next level
-	addNestedComponent(currentMap, parts[1:], value)
+	if len(parts) > 1 {
+		addNestedComponent(currentMap, parts[1:], value)
+	}
 }
 
 func GetDefault() *Config {
