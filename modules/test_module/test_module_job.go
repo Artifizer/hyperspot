@@ -15,7 +15,7 @@ var testModuleJobQueue = job.JobQueueName("test-module-job-queue")
 // Job group definition
 var JOB_GROUP_TEST = &job.JobGroup{
 	Name:        "test",
-	Queue:       testModuleJobQueue, // Use the dedicated queue with 2 max parallel executors
+	Queue:       &job.JobQueueConfig{Capacity: 2, Name: testModuleJobQueue}, // Use the dedicated queue with 2 max parallel executors
 	Description: "Test jobs group",
 }
 
@@ -27,16 +27,10 @@ type TestModuleJobParams struct {
 }
 
 // testModuleJobWorker is the main worker function for the test job
-func testModuleJobWorker(ctx context.Context, worker job.JobWorker, progress chan<- float32) error {
-	// Convert job params to the correct type
-	j, ok := worker.(*job.JobObj)
+func testModuleJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+	params, ok := job.GetParamsPtr().(*TestModuleJobParams)
 	if !ok {
-		return fmt.Errorf("internal error, worker is not a job.JobObj")
-	}
-
-	params, ok := j.GetParamsPtr().(*TestModuleJobParams)
-	if !ok {
-		return fmt.Errorf("invalid job parameters type; expected *TestModuleJobParams")
+		return errorx.NewErrInternalServerError("invalid job parameters type; expected *TestModuleJobParams")
 	}
 
 	// Get the total duration in seconds
@@ -48,14 +42,14 @@ func testModuleJobWorker(ctx context.Context, worker job.JobWorker, progress cha
 	// Calculate the number of steps (0.5 second increments)
 	steps := totalDuration * 2
 
-	j.LogInfo("Starting test job for %d seconds (%d steps)", totalDuration, steps)
+	job.LogInfo("Starting test job for %d seconds (%d steps)", totalDuration, steps)
 
 	// Execute the job with 0.5 second increments
 	for i := 0; i < steps; i++ {
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return errorx.NewErrCanceled(ctx.Err().Error())
 		default:
 			// Continue execution
 		}
@@ -64,19 +58,22 @@ func testModuleJobWorker(ctx context.Context, worker job.JobWorker, progress cha
 		time.Sleep(250 * time.Millisecond)
 
 		// Update progress (0-100%)
-		progress := float32(i+1) / float32(steps) * 100
-		j.SetProgress(ctx, progress)
+		progressValue := float32(i+1) / float32(steps) * 100
+		if err := job.SetProgress(ctx, progressValue); err != nil {
+			return errorx.NewErrInternalServerError("failed to set progress: %w", err)
+		}
+		progress <- progressValue
 	}
 
 	return nil
 }
 
-// testModuleJobInit initializes the test job
-func testModuleJobInit(ctx context.Context, j *job.JobObj) (job.JobWorker, errorx.Error) {
+// testModuleParamsValidation validates the test job parameters
+func testModuleParamsValidation(ctx context.Context, j *job.JobObj) errorx.Error {
 	// Get and validate job parameters
 	jobParams, ok := j.GetParamsPtr().(*TestModuleJobParams)
 	if !ok {
-		return nil, errorx.NewErrInternalServerError("invalid job parameters type; expected *TestModuleJobParams")
+		return errorx.NewErrInternalServerError("invalid job parameters type; expected *TestModuleJobParams")
 	}
 
 	if jobParams.DurationLimitSec <= 0 {
@@ -84,12 +81,12 @@ func testModuleJobInit(ctx context.Context, j *job.JobObj) (job.JobWorker, error
 		jobParams.DurationLimitSec = 10
 	}
 
-	return j, nil
+	return nil
 }
 
 // RegisterTestModuleJob registers the test job type
 func RegisterTestModuleJob() *job.JobType {
-	_, err := job.RegisterJobQueue(testModuleJobQueue, 2)
+	_, err := job.JERegisterJobQueue(&job.JobQueueConfig{Capacity: 2, Name: testModuleJobQueue})
 	if err != nil {
 		panic(fmt.Sprintf("failed to register job queue: %s", err.Error()))
 	}
@@ -101,19 +98,17 @@ func RegisterTestModuleJob() *job.JobType {
 
 	return job.RegisterJobType(
 		job.JobTypeParams{
-			Group:                     JOB_GROUP_TEST,
-			Name:                      "test-module",
-			Description:               "Execute a test job that simulates work by sleeping",
-			Params:                    jobParams,
-			WorkerInitCallback:        testModuleJobInit,
-			WorkerExecutionCallback:   testModuleJobWorker,
-			WorkerStateUpdateCallback: nil,
-			WorkerSuspendCallback:     nil,
-			WorkerResumeCallback:      nil,
-			WorkerIsSuspendable:       true,
-			Timeout:                   time.Hour,
-			RetryDelay:                10 * time.Second,
-			MaxRetries:                3,
+			Group:                          JOB_GROUP_TEST,
+			Name:                           "test-module",
+			Description:                    "Execute a test job that simulates work by sleeping",
+			Params:                         jobParams,
+			WorkerParamsValidationCallback: testModuleParamsValidation,
+			WorkerExecutionCallback:        testModuleJobWorker,
+			WorkerStateUpdateCallback:      nil,
+			WorkerIsSuspendable:            true,
+			Timeout:                        time.Hour,
+			RetryDelay:                     10 * time.Second,
+			MaxRetries:                     3,
 		},
 	)
 }

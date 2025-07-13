@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/errorx"
+	"github.com/hypernetix/hyperspot/modules/job"
 	jobs "github.com/hypernetix/hyperspot/modules/job"
 )
 
@@ -20,17 +21,15 @@ type DockerImageDownloadJobParams struct {
 }
 
 // DockerImageDownloadJobWorker performs work for Docker image download jobs
-func DockerImageDownloadJobWorker(ctx context.Context, worker jobs.JobWorker, progress chan<- float32) error {
-	j := worker.(*jobs.JobObj)
-
-	paramsPtr := j.GetParamsPtr()
+func DockerImageDownloadJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+	paramsPtr := job.GetParamsPtr()
 	if paramsPtr == nil {
-		return fmt.Errorf("DockerImageJobWorker: job parameters are nil")
+		return errorx.NewErrInternalServerError("job parameters are nil")
 	}
 
 	params, ok := paramsPtr.(*DockerImageDownloadJobParams)
 	if !ok {
-		return fmt.Errorf("DockerImageJobWorker: invalid job parameters type; expected *DockerImageJobParams")
+		return errorx.NewErrInternalServerError("invalid job parameters type; expected *DockerImageJobParams")
 	}
 
 	// Initialize the Docker executor
@@ -39,7 +38,7 @@ func DockerImageDownloadJobWorker(ctx context.Context, worker jobs.JobWorker, pr
 	// Pull the Docker image with progress tracking
 	reader, err := executor.cli.ImagePull(ctx, params.CodeExecutorPtr.Image, types.ImagePullOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to pull Docker image: %w", err)
+		return errorx.NewErrInternalServerError("failed to pull Docker image: %s", err.Error())
 	}
 	defer reader.Close()
 
@@ -63,7 +62,7 @@ func DockerImageDownloadJobWorker(ctx context.Context, worker jobs.JobWorker, pr
 			if err == io.EOF {
 				break
 			}
-			return fmt.Errorf("error decoding pull progress: %w", err)
+			return errorx.NewErrInternalServerError("error decoding pull progress: %s", err.Error())
 		}
 
 		// Calculate progress percentage if both values are available
@@ -80,30 +79,30 @@ func DockerImageDownloadJobWorker(ctx context.Context, worker jobs.JobWorker, pr
 	return nil
 }
 
-// DockerImageDownloadJobInit initializes the Docker image download job
-func DockerImageDownloadJobInit(ctx context.Context, job *jobs.JobObj) (jobs.JobWorker, errorx.Error) {
+// DockerImageDownloadParamsValidation validates the Docker image download job parameters
+func DockerImageDownloadParamsValidation(ctx context.Context, job *jobs.JobObj) errorx.Error {
 	paramsPtr := job.GetParamsPtr()
 	if paramsPtr == nil {
-		return nil, errorx.NewErrInternalServerError("invalid job parameters")
+		return errorx.NewErrInternalServerError("invalid job parameters")
 	}
 
 	params, ok := paramsPtr.(*DockerImageDownloadJobParams)
 	if !ok {
-		return nil, errorx.NewErrInternalServerError("invalid job parameters type; expected *DockerImageJobParams")
+		return errorx.NewErrInternalServerError("invalid job parameters type; expected *DockerImageJobParams")
 	}
 
 	if params.CodeExecutor == "" {
-		return nil, errorx.NewErrBadRequest("docker executor is not set")
+		return errorx.NewErrBadRequest("docker executor is not set")
 	}
 
 	params.CodeExecutorPtr = newDockerExecutor(params.CodeExecutor)
 
 	// Create a new Docker executor for the job
 	if params.CodeExecutorPtr == nil {
-		return nil, errorx.NewErrInternalServerError(fmt.Sprintf("failed to create Docker executor for image '%s'", params.CodeExecutor))
+		return errorx.NewErrInternalServerError(fmt.Sprintf("failed to create Docker executor for image '%s'", params.CodeExecutor))
 	}
 
-	return job, nil
+	return nil
 }
 
 // ScheduleDockerImageDownloadJob schedules a job to download a Docker image
@@ -120,7 +119,7 @@ func ScheduleDockerImageDownloadJob(ctx context.Context, executorName string) (*
 	}
 
 	// Create and schedule the job
-	job, err := jobs.NewJob(
+	job, err := jobs.JENewJob(
 		ctx,
 		uuid.New(),
 		dockerImageDownloadJob,
@@ -149,17 +148,15 @@ func RegisterDockerImageJob() {
 				Description: "Download and manage Docker images",
 				Queue:       jobs.JobQueueDownload,
 			},
-			Name:                      "download",
-			Description:               "Download a Docker image",
-			Params:                    &DockerImageDownloadJobParams{},
-			WorkerInitCallback:        DockerImageDownloadJobInit,
-			WorkerExecutionCallback:   DockerImageDownloadJobWorker,
-			WorkerStateUpdateCallback: nil,
-			WorkerSuspendCallback:     nil,
-			WorkerResumeCallback:      nil,
-			Timeout:                   3600,
-			MaxRetries:                30,
-			RetryDelay:                3,
+			Name:                           "download",
+			Description:                    "Download a Docker image",
+			Params:                         &DockerImageDownloadJobParams{},
+			WorkerParamsValidationCallback: DockerImageDownloadParamsValidation,
+			WorkerExecutionCallback:        DockerImageDownloadJobWorker,
+			WorkerStateUpdateCallback:      nil,
+			Timeout:                        3600,
+			MaxRetries:                     30,
+			RetryDelay:                     3,
 		},
 	)
 }

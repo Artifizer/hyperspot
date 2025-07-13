@@ -3,7 +3,6 @@ package job
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/api"
+	"github.com/hypernetix/hyperspot/libs/errorx"
 )
 
 type JobAPI struct{}
@@ -38,7 +38,7 @@ type ListJobsAPIRequest struct {
 
 func (j *JobAPI) JobToAPIResponse(job *JobObj) *JobAPIResponse {
 	return &JobAPIResponse{
-		Body: JobAPIResponseItem(job.private),
+		Body: JobAPIResponseItem(job.priv),
 	}
 }
 
@@ -87,7 +87,7 @@ func (j *JobAPI) APIListJobTypes(ctx context.Context, request *api.PageAPIReques
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	jobTypes := GetJobTypes(ctx, request)
+	jobTypes := getJobTypes(ctx, request)
 	for _, jobType := range jobTypes {
 		resp.Body.JobTypes = append(resp.Body.JobTypes, JobTypeAPIResponseItem(*jobType))
 	}
@@ -98,12 +98,13 @@ func (j *JobAPI) APIListJobTypes(ctx context.Context, request *api.PageAPIReques
 }
 
 func (j *JobAPI) APIGetJobType(ctx context.Context, input *struct {
-	JobTypeID string `path:"job_type_id"`
+	JobTypeID string `path:"job_type_id" example:"llm_model_ops:load"`
 }) (*JobTypeAPIResponse, error) {
-	jobType, ok := GetJobType(input.JobTypeID)
+	jobType, ok := getJobType(input.JobTypeID)
 	if !ok {
 		return nil, huma.Error404NotFound("Job type not found")
 	}
+
 	return j.JobTypeToAPIResponse(jobType), nil
 }
 
@@ -114,7 +115,7 @@ func (j *JobAPI) APIListJobGroups(ctx context.Context, input *ListJobGroupsAPIRe
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	jobGroups := GetJobGroups(ctx, &input.PageAPIRequest)
+	jobGroups := getJobGroups(ctx, &input.PageAPIRequest)
 	for _, jobGroup := range jobGroups {
 		resp.Body.JobGroups = append(resp.Body.JobGroups, JobGroupAPIResponseItem(*jobGroup))
 	}
@@ -124,12 +125,13 @@ func (j *JobAPI) APIListJobGroups(ctx context.Context, input *ListJobGroupsAPIRe
 }
 
 func (j *JobAPI) APIGetJobGroup(ctx context.Context, input *struct {
-	Name string `path:"job_group_id"`
+	Name string `path:"job_group_id" doc:"The job group name" example:"llm_model_ops"`
 }) (*JobGroupAPIResponse, error) {
-	jobGroup, ok := GetJobGroup(input.Name)
+	jobGroup, ok := getJobGroup(input.Name)
 	if !ok {
-		return nil, huma.Error404NotFound("Job type not found")
+		return nil, huma.Error404NotFound("Job group not found")
 	}
+
 	return j.JobGroupToAPIResponse(jobGroup), nil
 }
 
@@ -146,7 +148,7 @@ func (j *JobAPI) APIListJobs(ctx context.Context, input *ListJobsAPIRequest) (*L
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	jobs, err := ListJobs(ctx, &input.PageAPIRequest, input.Status)
+	jobs, err := listJobs(ctx, &input.PageAPIRequest, input.Status)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
@@ -154,7 +156,7 @@ func (j *JobAPI) APIListJobs(ctx context.Context, input *ListJobsAPIRequest) (*L
 	resp.Body.Jobs = make([]JobAPIResponseItem, 0)
 
 	for _, job := range jobs {
-		resp.Body.Jobs = append(resp.Body.Jobs, JobAPIResponseItem(job.private))
+		resp.Body.Jobs = append(resp.Body.Jobs, JobAPIResponseItem(job.priv))
 	}
 
 	resp.Body.Total = len(jobs)
@@ -169,9 +171,9 @@ func (j *JobAPI) APIScheduleJob(ctx context.Context, input *struct {
 		Params         interface{} `json:"params"`
 	}
 }) (*JobAPIResponse, error) {
-	jobType, ok := GetJobType(input.Body.Type)
+	jobType, ok := getJobType(input.Body.Type)
 	if !ok {
-		jobTypes := GetJobTypes(ctx, nil)
+		jobTypes := getJobTypes(ctx, nil)
 		jobTypeNames := make([]string, len(jobTypes))
 		for i, jt := range jobTypes {
 			jobTypeNames[i] = jt.TypeID
@@ -188,9 +190,9 @@ func (j *JobAPI) APIScheduleJob(ctx context.Context, input *struct {
 		return nil, huma.Error400BadRequest("Invalid idempotency key")
 	}
 
-	job, err := JEGetJob(ctx, idempotencyKey)
+	job, err := JEGetJobByID(ctx, idempotencyKey)
 	if err == nil {
-		if job.private.IdempotencyKey != idempotencyKey {
+		if job.priv.IdempotencyKey != idempotencyKey {
 			return nil, huma.Error409Conflict("Job with given ID key already exists")
 		}
 		return j.JobToAPIResponse(job), nil
@@ -201,9 +203,9 @@ func (j *JobAPI) APIScheduleJob(ctx context.Context, input *struct {
 		return nil, huma.Error400BadRequest("Invalid params format")
 	}
 
-	job, err = NewJob(ctx, idempotencyKey, jobType, string(paramsBytes))
-	if err != nil {
-		return nil, huma.Error400BadRequest(fmt.Sprintf("Invalid data format: %s", err))
+	job, errx := JENewJob(ctx, idempotencyKey, jobType, string(paramsBytes))
+	if errx != nil {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("Invalid data format: %s", errx))
 	}
 
 	if errx := JEScheduleJob(ctx, job); errx != nil {
@@ -214,136 +216,142 @@ func (j *JobAPI) APIScheduleJob(ctx context.Context, input *struct {
 }
 
 func (j *JobAPI) APIDeleteJob(ctx context.Context, input *struct {
-	JobID string `path:"job_id"`
+	JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }) (*struct{}, error) {
 	uuid, err := uuid.Parse(input.JobID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("Invalid job ID")
 	}
-	err = JEDeleteJob(ctx, uuid, errors.New("deleted by API"))
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+
+	errx := jeDeleteJob(ctx, uuid, "deleted by API")
+	if errx != nil {
+		switch errx.(type) {
+		case *errorx.ErrNotFound:
+			return &struct{}{}, nil
+		default:
+			return nil, errx.HumaError()
+		}
 	}
+
 	return &struct{}{}, nil
 }
 
 func (j *JobAPI) APICancelJob(ctx context.Context, input *struct {
-	JobID string `path:"job_id"`
+	JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }) (*JobAPIResponse, error) {
 	uuid, err := uuid.Parse(input.JobID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("Invalid job ID")
 	}
 
-	job, err := JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx := JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
-	if job.private.Status == JobStatusFailed || job.private.Status == JobStatusCompleted {
-		job, err = JEGetJob(ctx, uuid)
-		if err != nil {
-			return nil, huma.Error404NotFound("Job not found")
+	if job.priv.Status == JobStatusFailed || job.priv.Status == JobStatusCompleted {
+		job, errx = JEGetJobByID(ctx, uuid)
+		if errx != nil {
+			return nil, errx.HumaError()
 		}
 		return j.JobToAPIResponse(job), nil
 	}
 
-	if job.private.Status != JobStatusWaiting && job.private.Status != JobStatusRunning {
+	if job.priv.Status != JobStatusWaiting && job.priv.Status != JobStatusRunning {
 		return j.JobToAPIResponse(job), nil
 	}
 
-	err = JECancelJob(ctx, uuid, errors.New("canceled by API"))
+	err = JECancelJob(ctx, uuid, "canceled by API")
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("Failed to cancel job: %s", err))
 	}
 
 	// Re-read job after cancel
-	job, err = JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx = JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
 	return j.JobToAPIResponse(job), nil
 }
 
 func (j *JobAPI) APISuspendJob(ctx context.Context, input *struct {
-	JobID string `path:"job_id"`
+	JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }) (*JobAPIResponse, error) {
 	uuid, err := uuid.Parse(input.JobID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("Invalid job ID")
 	}
 
-	job, err := JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx := JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
 	// Check if the job can be suspended (only initializing, waiting, suspended and running jobs can be suspended)
-	if job.private.Status != JobStatusInit && job.private.Status != JobStatusWaiting &&
-		job.private.Status != JobStatusRunning && job.private.Status != JobStatusSuspended {
-		return nil, huma.Error409Conflict(fmt.Sprintf("Job with status '%s' cannot be suspended", job.private.Status))
+	if job.priv.Status != JobStatusInit && job.priv.Status != JobStatusWaiting &&
+		job.priv.Status != JobStatusRunning && job.priv.Status != JobStatusSuspended {
+		return nil, huma.Error409Conflict(fmt.Sprintf("Job with status '%s' cannot be suspended", job.priv.Status))
 	}
 
 	// Suspend the job
-	errx := JESuspendJob(ctx, uuid)
+	errx = jeSuspendJob(ctx, uuid)
 	if errx != nil {
 		return nil, errx.HumaError()
 	}
 
 	// Re-read job after suspend
-	job, err = JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx = JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
 	return j.JobToAPIResponse(job), nil
 }
 
 func (j *JobAPI) APIResumeJob(ctx context.Context, input *struct {
-	JobID string `path:"job_id"`
+	JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }) (*JobAPIResponse, error) {
 	uuid, err := uuid.Parse(input.JobID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("Invalid job ID")
 	}
 
-	job, err := JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx := JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
 	// Check if the job can be resumed (only suspended jobs can be resumed)
-	if job.private.Status != JobStatusSuspended {
-		return nil, huma.Error409Conflict(fmt.Sprintf("Job with status '%s' cannot be resumed", job.private.Status))
+	if job.priv.Status != JobStatusSuspended {
+		return nil, huma.Error409Conflict(fmt.Sprintf("Job with status '%s' cannot be resumed", job.priv.Status))
 	}
 
 	// Resume the job
-	errx := JEResumeJob(ctx, uuid)
+	errx = jeResumeJob(ctx, uuid)
 	if errx != nil {
 		return nil, errx.HumaError()
 	}
 
 	// Re-read job after resume
-	job, err = JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx = JEGetJobByID(ctx, uuid)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 
 	return j.JobToAPIResponse(job), nil
 }
 
 func (j *JobAPI) APIGetJob(ctx context.Context, input *struct {
-	JobID string `path:"job_id"`
+	JobID uuid.UUID `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 }) (*JobAPIResponse, error) {
-	uuid, err := uuid.Parse(input.JobID)
-	if err != nil {
+	if input.JobID == uuid.Nil {
 		return nil, huma.Error400BadRequest("Invalid job ID")
 	}
 
-	job, err := JEGetJob(ctx, uuid)
-	if err != nil {
-		return nil, huma.Error404NotFound("Job not found")
+	job, errx := JEGetJobByID(ctx, input.JobID)
+	if errx != nil {
+		return nil, errx.HumaError()
 	}
 	return j.JobToAPIResponse(job), nil
 }

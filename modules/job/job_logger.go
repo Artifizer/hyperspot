@@ -13,11 +13,11 @@ func (j *JobObj) Log(level logging.Level, msg string, args ...interface{}) {
 	// Format the message with arguments first
 	formattedMsg := fmt.Sprintf(msg, args...)
 	fields := []zap.Field{
-		zap.String("job_type", j.private.Type),
-		zap.String("job_id", j.private.JobID.String()),
+		zap.String("job_type", j.priv.Type),
+		zap.String("job_id", j.priv.JobID.String()),
 	}
 
-	textMsg := fmt.Sprintf("Job %s/%s: %s", j.private.Type, j.private.JobID.String(), formattedMsg)
+	textMsg := fmt.Sprintf("Job %s/%s@%p: %s", j.priv.Type, j.priv.JobID.String(), j, formattedMsg)
 
 	logger.ConsoleLogger.Log(level, textMsg)
 	logger.FileLogger.With(fields...).Log(level, formattedMsg)
@@ -50,10 +50,10 @@ func (j *JobObj) LogError(msg string, args ...interface{}) {
 // Job progress logs
 func (j *JobObj) logProgress(progress float32) {
 	fields := []zap.Field{
-		zap.String("job_type", j.private.Type),
-		zap.String("job_id", j.private.JobID.String()),
+		zap.String("job_type", j.priv.Type),
+		zap.String("job_id", j.priv.JobID.String()),
 		zap.Float32("progress", progress),
 	}
-	logger.ConsoleLogger.Debug(fmt.Sprintf("Job %s/%s: progress = %.1f %%", j.private.Type, j.private.JobID.String(), progress))
+	logger.ConsoleLogger.Debug(fmt.Sprintf("Job %s/%s: progress = %.1f %%", j.priv.Type, j.priv.JobID.String(), progress))
 	logger.FileLogger.With(fields...).Debug("Job progress")
 }

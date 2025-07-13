@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hypernetix/hyperspot/libs/auth"
 	"github.com/hypernetix/hyperspot/libs/db"
 	"github.com/hypernetix/hyperspot/libs/errorx"
 	"github.com/hypernetix/hyperspot/libs/logging"
@@ -15,179 +15,134 @@ import (
 	"gorm.io/gorm"
 )
 
-// ----------------------------------------------------------------------
-// Define JobQueueName type (string alias) for queues.
-type JobQueueName string
-
 var jobExecutorMu utils.DebugMutex
 
-var jobsStore *JobsExecutor
+var je *jobsExecutor
 
-const (
-	JobQueueCompute     JobQueueName = "compute"
-	JobQueueMaintenance JobQueueName = "maintenance"
-	JobQueueDownload    JobQueueName = "download"
-)
-
-var errReasonCancelByAPI = fmt.Errorf("job canceled by API")
-
-// ----------------------------------------------------------------------
-// jobQueueWorker represents a pre-created jobQueueWorker that is attached to a specific queue.
-type jobQueueWorker struct {
-	// Store the name of the queue this worker belongs to.
-	queue *JobQueue
-	// (Additional fields could be added if needed.)
-}
-
-// ----------------------------------------------------------------------
-// JobQueue encapsulates all queue‐specific logic.
-type JobQueue struct {
-	name         JobQueueName
-	capacity     int
-	workers      []*jobQueueWorker     // the pool of workers for this queue
-	waiting      []*JobObj             // list of job IDs waiting to be executed
-	running      map[uuid.UUID]*JobObj // map of running job IDs to their cancellation functions
-	mu           utils.DebugMutex
-	waitingJobCh chan struct{} // channel to signal new waiting jobs
-}
-
-// NewJobQueue creates a new JobQueue.
-func NewJobQueue(name JobQueueName, capacity int) *JobQueue {
-	return &JobQueue{
-		name:         name,
-		workers:      make([]*jobQueueWorker, 0, capacity),
-		waiting:      make([]*JobObj, 0),
-		running:      make(map[uuid.UUID]*JobObj),
-		capacity:     capacity,
-		waitingJobCh: make(chan struct{}, 1), // buffered so that a single signal suffices
-	}
-}
-
-// AddJob adds a new job to the waiting list.
-func (q *JobQueue) AddJob(job *JobObj) {
-	q.mu.Lock()
-	q.waiting = append(q.waiting, job)
-	q.mu.Unlock()
-
-	// Signal that a new waiting job is available (non-blocking)
-	select {
-	case q.waitingJobCh <- struct{}{}:
-	default:
-		// channel already signaled
-	}
-}
-
-// GetNextJob returns the next waitingjob.
-// If no jobs are waiting, returns nil.
-func (q *JobQueue) GetNextJob() *JobObj {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.waiting) == 0 {
-		return nil
-	}
-	j := q.waiting[0]
-	q.waiting = q.waiting[1:]
-
-	logging.Trace("Getting next job %s", j.GetJobID())
-	return j
-}
-
-// AddRunningJob records that a job is now running.
-func (q *JobQueue) AddRunningJob(job *JobObj) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	job.LogTrace("adding job to the 'running' pool")
-
-	q.running[job.GetJobID()] = job
-}
-
-// RemoveRunningJob removes a job from the running map.
-func (q *JobQueue) RemoveRunningJob(jobID uuid.UUID) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	logging.Trace("removing job '%s' from the running pool", jobID)
-
-	delete(q.running, jobID)
-}
-
-// ----------------------------------------------------------------------
-// JobsExecutor simply routes jobs into their proper queue.
-type JobsExecutor struct {
+type jobsExecutor struct {
 	queues         map[JobQueueName]*JobQueue
+	jobsMap        map[uuid.UUID]*JobObj
+	jobsLockMap    map[uuid.UUID]*utils.DebugMutex
 	shutdownSignal chan struct{}
 	mu             utils.DebugMutex
+	deepTracing    bool
 }
 
-func RegisterJobQueue(queueName JobQueueName, capacity int) (*JobQueue, error) {
+func JEInit() error {
+	jobExecutorMu.Lock()
+	if je == nil {
+		je = &jobsExecutor{
+			queues:         make(map[JobQueueName]*JobQueue),
+			jobsMap:        make(map[uuid.UUID]*JobObj),
+			jobsLockMap:    make(map[uuid.UUID]*utils.DebugMutex),
+			shutdownSignal: make(chan struct{}),
+			deepTracing:    true,
+		}
+	}
+	jobExecutorMu.Unlock()
+
+	if _, err := JERegisterJobQueue(JobQueueCompute); err != nil {
+		return err
+	}
+	if _, err := JERegisterJobQueue(JobQueueMaintenance); err != nil {
+		return err
+	}
+	if _, err := JERegisterJobQueue(JobQueueDownload); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func JERegisterJobQueue(queueConfig *JobQueueConfig) (*JobQueue, error) {
+	if je == nil {
+		err := JEInit()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	jobExecutorMu.Lock()
 	defer jobExecutorMu.Unlock()
 
-	queue := NewJobQueue(queueName, capacity)
-
-	if jobsStore == nil {
-		jobsStore = &JobsExecutor{
-			queues:         make(map[JobQueueName]*JobQueue),
-			shutdownSignal: make(chan struct{}),
+	if _, ok := je.queues[queueConfig.Name]; ok {
+		if je.queues[queueConfig.Name].config.Capacity != queueConfig.Capacity {
+			return nil, fmt.Errorf("queue '%s' already registered with different capacity", queueConfig.Name)
 		}
+		return je.queues[queueConfig.Name], nil
 	}
 
-	if _, ok := jobsStore.queues[queue.name]; ok {
-		return nil, fmt.Errorf("job queue '%s' already registered", queue.name)
-	}
+	queue := NewJobQueue(queueConfig)
 
-	jobsStore.queues[queue.name] = queue
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 
-	for i := 0; i < queue.capacity; i++ {
+	for i := 0; i < queueConfig.Capacity; i++ {
 		// Each worker is associated with its queue name.
 		w := &jobQueueWorker{queue: queue}
 		queue.workers = append(queue.workers, w)
-		go jobsStore.runWorker(queue)
+		go je.jobWorker(i, queue)
 	}
+
+	je.queues[queueConfig.Name] = queue
 
 	return queue, nil
 }
 
-func GetJobQueue(queueName JobQueueName) (*JobQueue, error) {
+func jeGetJobQueue(queueName JobQueueName) (*JobQueue, error) {
+	if je == nil {
+		if err := JEInit(); err != nil {
+			return nil, err
+		}
+	}
+
 	jobExecutorMu.Lock()
+	defer jobExecutorMu.Unlock()
 
-	var ok bool
-	var queue *JobQueue
-
-	if jobsStore == nil {
-		ok = false
-	} else {
-		queue, ok = jobsStore.queues[queueName]
+	if _, ok := je.queues[queueName]; ok {
+		return je.queues[queueName], nil
 	}
 
-	jobExecutorMu.Unlock()
+	return nil, fmt.Errorf("queue '%s' not registered", queueName)
+}
 
-	if !ok {
-		var err error
+func (e *jobsExecutor) trace(msg string, args ...interface{}) {
+	if e.deepTracing {
+		logging.Trace("jobsExecutor: "+msg, args...)
+	}
+}
 
-		if queueName == JobQueueCompute {
-			queue, err = RegisterJobQueue(JobQueueCompute, 1)
-		} else if queueName == JobQueueMaintenance {
-			queue, err = RegisterJobQueue(JobQueueMaintenance, 5)
-		} else if queueName == JobQueueDownload {
-			queue, err = RegisterJobQueue(JobQueueDownload, 10)
-		} else {
-			return nil, fmt.Errorf("job queue '%s' not found", queueName)
-		}
+// getNextJob returns the next waitingjob.
+// If no jobs are waiting, returns nil.
+func (e *jobsExecutor) getNextJob(queue *JobQueue, workerID int) *JobObj {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 
-		if err != nil {
-			return nil, fmt.Errorf("failed to register job queue '%s': %w", queueName, err)
+	jobID, errx := getFirstWaitingJob(string(queue.config.Name))
+
+	if errx != nil {
+		switch errx.(type) {
+		case *errorx.ErrNotFound:
+			return nil
+		default:
+			logging.Error("failed to get first waiting job: %v", errx)
+			return nil
 		}
 	}
 
-	return queue, nil
+	job, err := e.lockJobByID(jobID, 0)
+	if err != nil {
+		return nil
+	}
+
+	e.trace("getNextJob(%s, worker #%d): got job %s", queue.config.Name, workerID, job.GetJobID())
+	return job
 }
 
 // getQueue selects the correct JobQueue based on the Job's type.
 // It is assumed that job.GetQueue() returns a JobQueueName.
-func (e *JobsExecutor) getQueue(job *JobObj) (*JobQueue, error) {
-	queueName := job.GetQueue()
+func (e *jobsExecutor) getQueue(job *JobObj) (*JobQueue, error) {
+	queueName := job.getQueueName()
 	queue, exists := e.queues[queueName]
 	if !exists {
 		return nil, fmt.Errorf("queue '%s' not found", queueName)
@@ -195,36 +150,36 @@ func (e *JobsExecutor) getQueue(job *JobObj) (*JobQueue, error) {
 	return queue, nil
 }
 
-// runWorker is the main loop for a worker that belongs to a given queue.
-func (e *JobsExecutor) runWorker(queue *JobQueue) {
+// jobWorker is the main loop for a worker that belongs to a given queue.
+func (e *jobsExecutor) jobWorker(workerID int, queue *JobQueue) {
+	e.trace("jobWorker(queue %s@%p, worker #%d)", queue.config.Name, queue, workerID)
 	for {
 		// Check for global shutdown
 		select {
 		case <-e.shutdownSignal:
+			e.trace("jobWorker(queue %s@%p, worker #%d): shutdown signal received", queue.config.Name, queue, workerID)
 			return
 		default:
 			// Proceed
 		}
 
-		job := queue.GetNextJob()
+		e.trace("jobWorker(queue %s@%p, worker #%d): waiting for next job ...", queue.config.Name, queue, workerID)
+
+		job := e.getNextJob(queue, workerID)
 		if job == nil {
 			// wait for a signal that a job is available.
 			select {
 			case <-queue.waitingJobCh:
+				e.trace("jobWorker(queue %s@%p, worker #%d): signal received", queue.config.Name, queue, workerID)
 				// signal received, proceed to try getting the job again
 			case <-e.shutdownSignal:
+				e.trace("jobWorker(queue %s@%p, worker #%d): shutdown signal received", queue.config.Name, queue, workerID)
 				return
 			}
 			continue
 		}
 
-		jobTransitionMutex.Lock()
-		status := job.GetStatus()
-		if status == JobStatusCanceling || status == JobStatusCanceled {
-			jobTransitionMutex.Unlock()
-			continue
-		}
-		jobTransitionMutex.Unlock()
+		e.trace("jobWorker(queue %s@%p, worker #%d): processing job %s", queue.config.Name, queue, workerID, job.GetJobID())
 
 		// Prepare execution context using job timeout if set.
 		var ctx context.Context
@@ -235,7 +190,7 @@ func (e *JobsExecutor) runWorker(queue *JobQueue) {
 
 		if job.GetTypePtr().TimeoutSec > 0 {
 			eta := time.Now().Add(timeout)
-			job.LogDebug("Setting timeout to %d seconds (deadline: %s) for job %s", job.GetTypePtr().TimeoutSec, eta.Format(time.RFC3339), job.private.JobID)
+			job.LogDebug("Setting timeout to %d seconds (deadline: %s) for job %s", job.GetTypePtr().TimeoutSec, eta.Format(time.RFC3339), job.priv.JobID)
 			ctx, cancelFunc = context.WithTimeout(context.Background(), timeout)
 		} else {
 			ctx, cancelFunc = context.WithCancel(context.Background())
@@ -243,313 +198,532 @@ func (e *JobsExecutor) runWorker(queue *JobQueue) {
 
 		job.cancel = cancelFunc
 
-		// Record the job as running in the queue.
-		queue.AddRunningJob(job)
-
 		if ctx.Err() != nil {
 			job.LogError("starting the job with context error: %s", ctx.Err().Error())
 		}
 
+		err := job.setRunning()
+		if err != nil {
+			job.LogError("failed to set job as running: %v", err)
+			err = job.setFailed(fmt.Sprintf("failed to set job as running: %v", err))
+			if err != nil {
+				job.LogError("failed to set job as failed: %v", err)
+			}
+			time.Sleep(100 * time.Millisecond) // any better ideas?
+			e.unlockJob(job)
+			continue
+		}
+		e.unlockJob(job)
+
 		// Execute the job.
-		err := e.executeJob(ctx, job)
+		execErr := e.executeJob(ctx, job)
+
+		e.trace("jobWorker(queue %s@%p, worker #%d): job %s execution completed, err: %v", queue.config.Name, queue, workerID, job.GetJobID(), err)
+
+		if job, errx := e.lockJob(job, 0); errx != nil {
+			job.LogError("Failed to lock job: %v", errx)
+			panic("jobWorker() - failed to lock job") // must not happen
+		}
+
+		status := job.getStatus()
 
 		ctxErr := ctx.Err()
 
 		// Cleanup after execution.
 		cancelFunc()
-		queue.RemoveRunningJob(job.private.JobID)
 
 		// Check job result.
-		if err == nil {
-			job.setCompleted(ctx, "completed successfully")
+		if execErr == nil {
+			if status == JobStatusSkipped {
+				job.LogTrace("skipped job")
+			} else if setErr := job.setCompleted("completed successfully"); setErr != nil {
+				job.LogError("Failed to set job as completed: %v", setErr)
+			}
 		} else {
-			status = job.GetStatus()
+			e.trace("jobWorker(queue %s@%p, worker #%d): job %s execution problem: %v, status: %s, retries: %d, max retries: %d", queue.config.Name, queue, workerID, job.GetJobID(), err, status, job.priv.Retries, job.priv.MaxRetries)
 
 			if ctxErr == context.DeadlineExceeded || (job.GetTypePtr().TimeoutSec > 0 && time.Since(startTime) >= timeout) {
-				job.setTimedOut(ctx, err)
+				if setErr := job.setTimedOut(""); setErr != nil {
+					job.LogError("Failed to set job as timed out: %v", setErr)
+				}
 			} else if status == JobStatusCanceling {
-				job.setCancelled(ctx, fmt.Errorf("canceled as '%w'", ctxErr))
+				if setErr := job.setCanceled(""); setErr != nil {
+					job.LogError("Failed to set job as canceled: %v", setErr)
+				}
 			} else if status == JobStatusSuspending {
-				job.setSuspended(ctx, fmt.Errorf("suspended as '%w'", ctxErr))
+				if setErr := job.setSuspended(""); setErr != nil {
+					job.LogError("Failed to set job as suspended: %v", setErr)
+				}
 			} else if status == JobStatusTimedOut || status == JobStatusCanceled {
 				// OK, do not retry timed out or canceled jobs
-			} else if job.private.Retries < job.private.MaxRetries {
-				e.retryJob(job, queue)
+			} else if job.priv.Retries < job.priv.MaxRetries {
+				e.trace("waiting %d seconds before retrying job %s ...", job.priv.RetryDelaySec, job.GetJobID())
+				job.setRetrying("")
+
+				time.AfterFunc(time.Duration(job.priv.RetryDelaySec)*time.Second, func() {
+					if job, errx := e.lockJob(job, 0); errx != nil {
+						job.LogError("Failed to lock job: %v", errx)
+					}
+					if job.GetStatus() == JobStatusRetrying {
+						e.trace("retrying job %s after %d seconds ...", job.GetJobID(), job.priv.RetryDelaySec)
+						e.wakeUp(job)
+					}
+					e.unlockJob(job)
+				})
 			} else {
-				job.setFailed(ctx, err)
+				if setErr := job.setFailed(execErr.Error()); setErr != nil {
+					job.LogError("Error on trying to set job as 'failed': %v", setErr)
+				}
 			}
 		}
+
+		// Job is done, unlock it.
+		e.unlockJob(job)
 	}
+}
+
+func (e *jobsExecutor) newJob(ctx context.Context, idempotencyKey uuid.UUID, jobType *JobType, paramsStr string) (*JobObj, errorx.Error) {
+	job, errx := newJob(ctx, idempotencyKey, jobType, paramsStr)
+	if errx != nil {
+		return nil, errx
+	}
+	e.getJob(job)
+	e.putJob(job)
+	return job, nil
 }
 
 // executeJob runs the job's worker function.
 // It creates a progress channel that updates job progress.
-func (e *JobsExecutor) executeJob(ctx context.Context, job *JobObj) error {
+func (e *jobsExecutor) executeJob(ctx context.Context, job *JobObj) errorx.Error {
+	e.trace("executeJob(%s@%p): executing job ...", job.priv.JobID, job)
+	status := job.GetStatus()
+	if status != JobStatusRunning {
+		return errorx.NewErrInternalServerError("job %s is not running, it is %s", job.priv.JobID, status)
+	}
+
 	progress := make(chan float32)
 	defer close(progress)
 
 	// Propagate progress updates.
 	go func() {
 		for p := range progress {
-			job.SetProgress(ctx, p)
+			if err := job.setProgress(p); err != nil {
+				job.LogWarn("executeJob(%s): Failed to set progress: %v", job.priv.JobID, err)
+			}
 		}
 	}()
 
-	// Mark the job as running in persistent storage.
-	if err := job.setRunning(ctx); err != nil {
-		return err
-	}
-
 	if job.GetTypePtr() != nil && job.GetTypePtr().WorkerExecutionCallback != nil {
 		// Execute the job-specific worker.
-		err := job.GetTypePtr().WorkerExecutionCallback(ctx, job.getWorker(ctx), progress)
-		if err != nil {
-			return err
+		errx := job.GetTypePtr().WorkerExecutionCallback(ctx, job, progress)
+		if errx != nil {
+			return errx
 		}
 	}
 
-	return job.setCompleted(ctx, "")
+	return nil
 }
 
-// retryJob schedules a retry for the job after a delay (simple exponential backoff).
-func (e *JobsExecutor) retryJob(job *JobObj, queue *JobQueue) {
-	job.LogDebug("Retrying job %s", job.private.JobID.String())
+func (e *jobsExecutor) wakeUp(job *JobObj) errorx.Error {
+	e.trace("wakeUp(%s)", job.priv.JobID)
+	if e.jobTryLock(job) {
+		panic("wakeUp() must be called on a locked job")
+	}
 
-	job.private.Retries++
-	delay := time.Duration(job.private.Retries) * time.Duration(job.private.RetryDelaySec)
-	time.AfterFunc(delay, func() {
-		queue.AddJob(job)
-	})
-}
-
-// schedule adds a job to the appropriate queue.
-// job.GetQueue() determines which queue to use.
-func (e *JobsExecutor) schedule(ctx context.Context, job *JobObj) errorx.Error {
 	queue, err := e.getQueue(job)
 	if err != nil {
 		return errorx.NewErrInternalServerError(err.Error())
 	}
 	// Initialize the job in persistent storage.
-	if err := job.schedule(ctx); err != nil {
+	if err := job.schedule(); err != nil {
 		return errorx.NewErrInternalServerError(err.Error())
 	}
-	queue.AddJob(job)
+	queue.wakeUp()
 	return nil
 }
 
-// cancel searches all queues for the specified job and cancels it.
-func (e *JobsExecutor) cancel(ctx context.Context, jobID uuid.UUID, reason error) errorx.Error {
-	job, errx := e.get(ctx, jobID)
+// schedule adds a job to the appropriate queue.
+// job.GetQueue() determines which queue to use.
+func (e *jobsExecutor) schedule(ctx context.Context, job *JobObj) errorx.Error {
+	e.trace("schedule(%s)", job.GetJobID())
+	_, errx := e.lockJob(job, 0)
 	if errx != nil {
 		return errx
 	}
+	defer e.unlockJob(job)
 
-	err := job.setCanceling(ctx, reason)
-	if err != nil {
-		return errorx.NewErrInternalServerError(err.Error())
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	for _, queue := range e.queues {
-		queue.mu.Lock()
-		if job, ok := queue.running[jobID]; ok {
-			job.cancel()
-			queue.mu.Unlock()
-
-			job.LogDebug("canceling running job")
-
-			// Keep job in the 'canceling' state until the worker function has completed
-			return nil
-		}
-		// Check waitingjobs.
-		for i, job := range queue.waiting {
-			if job.GetJobID() == jobID {
-				queue.waiting = append(queue.waiting[:i], queue.waiting[i+1:]...)
-				queue.mu.Unlock()
-				job.LogDebug("canceling waiting job")
-
-				// Job is in the waiting state, so update status to 'canceled' immediately
-				err = job.setCancelled(ctx, errReasonCancelByAPI)
-				if err != nil {
-					return errorx.NewErrInternalServerError(err.Error())
-				}
-				return nil
-			}
-		}
-		queue.mu.Unlock()
-	}
-
-	// Fallback to DB
-	job = &JobObj{}
-	err = db.DB.First(&job.private, "job_id = ?", jobID).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errorx.NewErrNotFound("job not found")
-		}
-		return errorx.NewErrInternalServerError(err.Error())
-	}
-
-	// Job is not being executed, so update status to 'canceled'
-	err = job.setCancelled(ctx, errReasonCancelByAPI)
-	if err != nil {
-		return errorx.NewErrInternalServerError(err.Error())
-	}
-	return nil
+	return e.wakeUp(job)
 }
 
-// suspend removes a job from the waiting or running queue and sets its status to suspended
-func (e *JobsExecutor) suspend(ctx context.Context, jobID uuid.UUID) errorx.Error {
-	job, errx := JEGetJob(ctx, jobID)
-	if errx != nil {
-		return errx
-	}
+func (e *jobsExecutor) try(ctx context.Context, jobID uuid.UUID, lockDuration time.Duration, f func(ctx context.Context, job *JobObj) errorx.Error) errorx.Error {
+	start := time.Now()
 
-	if !job.GetTypePtr().WorkerIsSuspendable {
-		return errorx.NewErrMethodNotAllowed(fmt.Sprintf("job type '%s' doesn't support suspend/resume", job.GetType()))
-	}
+	var job *JobObj
+	var errx errorx.Error
 
-	err := job.setSuspending(ctx, nil)
-	if err != nil {
-		return errorx.NewErrInternalServerError(err.Error())
-	}
+	tryDuration := min(lockDuration, 1*time.Second)
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// First, try to find the job in any of the queues
-	var foundJob *JobObj
-
-	for _, queue := range e.queues {
-		queue.mu.Lock()
-		defer queue.mu.Unlock()
-
-		// Check if the job is in the waiting queue
-		for i, job := range queue.waiting {
-			if job.GetJobID() != jobID {
-				continue
-			}
-
-			if job.GetTenantID() != auth.GetTenantID() || job.GetUserID() != auth.GetUserID() {
-				return errorx.NewErrNotFound("job not found")
-			}
-
-			// Remove job from waiting queue
-			queue.waiting = append(queue.waiting[:i], queue.waiting[i+1:]...)
-			err = job.setSuspended(ctx, nil)
-			if err != nil {
-				return errorx.NewErrInternalServerError(err.Error())
-			}
-			return nil
+	for time.Since(start) < tryDuration {
+		job, errx = e.lockJobByID(jobID, lockDuration)
+		if errx == nil {
+			errx = f(ctx, job)
+			e.unlockJob(job)
 		}
 
-		// If not found in waiting, check if it's running
-		if foundJob == nil {
-			job, exists := queue.running[jobID]
-
-			if !exists {
+		if errx != nil {
+			switch errx.(type) {
+			case *errorx.ErrLocked:
+				time.Sleep(time.Millisecond * 100)
 				continue
+			default:
+				return errx
 			}
-
-			if job.GetTenantID() != auth.GetTenantID() || job.GetUserID() != auth.GetUserID() {
-				return errorx.NewErrNotFound("job not found")
-			}
-
-			job.LogInfo("canceling job %s before suspend", jobID)
-			job.cancel()
-
-			// Remove from running map
-			delete(queue.running, jobID)
-			return nil
 		}
-	}
-
-	return errorx.NewErrBadRequest("job is in '%s' state and can not be suspended", job.GetStatus())
-}
-
-// resume puts a suspended job back in the waiting queue
-func (e *JobsExecutor) resume(ctx context.Context, jobID uuid.UUID) errorx.Error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// Get the tenant ID
-	tenantID := auth.GetTenantID()
-
-	// Get the job from the database
-	job, getErr := JEGetJob(ctx, jobID)
-	if getErr != nil {
-		return errorx.NewErrNotFound(fmt.Sprintf("job '%s' not found", jobID))
-	}
-
-	// Verify tenant ID
-	if job.private.TenantID != tenantID {
-		return errorx.NewErrNotFound(fmt.Sprintf("job '%s' not found", jobID))
-	}
-
-	status := job.GetStatus()
-	if status == JobStatusInit || status == JobStatusWaiting || status == JobStatusRunning {
 		return nil
 	}
 
-	// Set the job status to resumed (waiting)
-	resumeErr := job.setResumed(ctx)
-	if resumeErr != nil {
-		return errorx.NewErrInternalServerError(resumeErr.Error())
-	}
-
-	var err error
-	var worker JobWorker
-
-	if job.GetTypePtr().WorkerInitCallback != nil {
-		jobWorkerMutex.Lock()
-		defer jobWorkerMutex.Unlock()
-
-		job.LogDebug("initializing job worker on resume")
-		worker, err = job.GetTypePtr().WorkerInitCallback(ctx, job)
-		if err != nil {
-			return errorx.NewErrInternalServerError(err.Error())
+	if lockDuration == 0 {
+		// No timeout, do not give up and try to lock the job anyway
+		job, errx = e.lockJobByID(jobID, 0)
+		defer e.unlockJob(job)
+		if errx == nil {
+			errx = f(ctx, job)
 		}
-		job.worker = worker
+		return errx
 	}
 
-	// Add the job back to the appropriate queue
-	queue, queueErr := e.getQueue(job)
-	if queueErr != nil {
-		return errorx.NewErrInternalServerError(queueErr.Error())
-	}
-
-	queue.AddJob(job)
-
-	return nil
+	return errorx.NewErrLocked("job %s is locked: %v", jobID, errx)
 }
 
-// get retrieves a running job from any of the queues.
-func (e *JobsExecutor) get(ctx context.Context, jobID uuid.UUID) (*JobObj, errorx.Error) {
-	for _, queue := range e.queues {
-		queue.mu.Lock()
-		if job, ok := queue.running[jobID]; ok {
-			queue.mu.Unlock()
-			return job, nil
+func (e *jobsExecutor) cancel(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	e.trace("cancel(%s, %s)", jobID, reason)
+	return e.try(ctx, jobID, 2*time.Second, func(ctx context.Context, job *JobObj) errorx.Error {
+		status := job.getStatus()
+		switch status {
+		case JobStatusInit, JobStatusSuspended, JobStatusWaiting, JobStatusRetrying:
+			return job.setStatus(JobStatusCanceled, reason)
+		case JobStatusRunning, JobStatusResuming, JobStatusLocked:
+			errx := job.setStatus(JobStatusCanceling, reason)
+			if errx != nil {
+				return errx
+			}
+			job.cancel()
+			return nil
+		case JobStatusSkipped, JobStatusCanceling, JobStatusCanceled, JobStatusFailed, JobStatusTimedOut, JobStatusCompleted, JobStatusDeleted:
+			return nil // skip
+		case JobStatusSuspending:
+			return errorx.NewErrLocked("job is in '%s' state and can not be canceled, try again later", status)
+		default:
+			return errorx.NewErrBadRequest("job is in '%s' state and can not be canceled", status)
+		}
+	})
+}
+
+func (e *jobsExecutor) suspend(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	e.trace("suspend(%s, %s)", jobID, reason)
+	return e.try(ctx, jobID, 2*time.Second, func(ctx context.Context, job *JobObj) errorx.Error {
+		if !job.GetTypePtr().WorkerIsSuspendable {
+			return errorx.NewErrMethodNotAllowed(fmt.Sprintf("job type '%s' doesn't support suspend/resume", job.GetType()))
 		}
 
-		for _, job := range queue.waiting {
-			if job.GetJobID() == jobID {
-				queue.mu.Unlock()
-				return job, nil
+		status := job.getStatus()
+
+		switch status {
+		case JobStatusSuspending, JobStatusSuspended, JobStatusSkipped, JobStatusCanceling, JobStatusCanceled, JobStatusFailed, JobStatusTimedOut, JobStatusCompleted, JobStatusDeleted:
+			return nil // skip
+		case JobStatusInit, JobStatusWaiting, JobStatusRetrying:
+			if err := job.setSuspended(reason); err != nil {
+				return errorx.NewErrInternalServerError(err.Error())
 			}
+		case JobStatusLocked, JobStatusRunning:
+			if err := job.setSuspending(reason); err != nil {
+				return errorx.NewErrInternalServerError(err.Error())
+			}
+			job.cancel()
+		default:
+			return errorx.NewErrLocked("job is in '%s' state and can not be suspended, try again later", status)
 		}
-		queue.mu.Unlock()
+
+		return nil
+	})
+}
+
+func (e *jobsExecutor) resume(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	e.trace("resume(%s, %s)", jobID, reason)
+	return e.try(ctx, jobID, 2*time.Second, func(ctx context.Context, job *JobObj) errorx.Error {
+		if !job.GetTypePtr().WorkerIsSuspendable {
+			return errorx.NewErrMethodNotAllowed(fmt.Sprintf("job type '%s' doesn't support suspend/resume", job.GetType()))
+		}
+
+		status := job.getStatus()
+
+		switch status {
+		case JobStatusInit, JobStatusWaiting, JobStatusRunning, JobStatusResuming, JobStatusLocked, JobStatusCanceling, JobStatusRetrying:
+			return nil
+		case JobStatusSuspended:
+			errx := job.setStatus(JobStatusResuming, "")
+			if errx != nil {
+				return errx
+			}
+
+			if job.GetTypePtr().WorkerInitCallback != nil {
+				job.LogDebug("initializing job worker on resume")
+				errx = job.GetTypePtr().WorkerInitCallback(ctx, job)
+				if errx != nil {
+					errx := job.setStatus(JobStatusFailed, errx.Error())
+					if errx != nil {
+						return errx
+					}
+					return errx
+				}
+			}
+
+			// Set the job status to resumed (waiting)
+			errx = job.setStatus(JobStatusWaiting, reason)
+			if errx != nil {
+				return errx
+			}
+
+			return e.wakeUp(job)
+
+		case JobStatusSuspending:
+			return errorx.NewErrLocked("job is in '%s' state and can not be resumed, try again later", status)
+		default:
+			return errorx.NewErrBadRequest("job is in '%s' state and can not be resumed", status)
+		}
+	})
+}
+
+func (e *jobsExecutor) delete(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	e.trace("delete(%s, %s)", jobID, reason)
+	return e.try(ctx, jobID, 2*time.Second, func(ctx context.Context, job *JobObj) errorx.Error {
+		status := job.getStatus()
+		switch status {
+		case JobStatusDeleted:
+			return nil
+		case JobStatusInit, JobStatusWaiting, JobStatusSuspended, JobStatusSkipped, JobStatusCanceled, JobStatusFailed, JobStatusTimedOut, JobStatusCompleted, JobStatusRetrying:
+			return job.delete()
+		default:
+			return errorx.NewErrLocked("job is in '%s' state and can not be deleted, try again later", status)
+		}
+	})
+}
+
+func (e *jobsExecutor) setResult(ctx context.Context, jobID uuid.UUID, result interface{}) errorx.Error {
+	e.trace("setResult(%s, %v)", jobID, result)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		return job.setResult(result)
+	})
+}
+
+func (e *jobsExecutor) setProgress(ctx context.Context, jobID uuid.UUID, progress float32) errorx.Error {
+	e.trace("setProgress(%s, %f)", jobID, progress)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		return job.setProgress(progress)
+	})
+}
+
+func (e *jobsExecutor) setLockedBy(ctx context.Context, jobID uuid.UUID, lockedBy uuid.UUID) errorx.Error {
+	e.trace("setLockedBy(%s): locking by: %s", jobID, lockedBy)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		return job.setLockedBy(lockedBy)
+	})
+}
+
+func (e *jobsExecutor) setUnlocked(ctx context.Context, jobID uuid.UUID) errorx.Error {
+	e.trace("setUnlocked(%s)", jobID)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		status := job.getStatus()
+		switch status {
+		case JobStatusLocked:
+			return job.setUnlocked()
+		case JobStatusRunning, JobStatusWaiting, JobStatusInit, JobStatusResuming, JobStatusCanceling, JobStatusRetrying:
+			return nil // skip
+		default:
+			return errorx.NewErrBadRequest("job is in '%s' state and can not be unlocked", status)
+		}
+	})
+}
+
+func (e *jobsExecutor) setRetryPolicy(ctx context.Context, jobID uuid.UUID, retryDelay time.Duration, maxRetries int, timeout time.Duration) errorx.Error {
+	e.trace("setRetryPolicy(%s, %s, %d, %s)", jobID, retryDelay, maxRetries, timeout)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		return job.setRetryPolicy(retryDelay, maxRetries, timeout)
+	})
+}
+
+func (e *jobsExecutor) setSkipped(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	e.trace("setSkipped(%s, %s)", jobID, reason)
+	return e.try(ctx, jobID, 0, func(ctx context.Context, job *JobObj) errorx.Error {
+		return job.setSkipped(reason)
+	})
+}
+
+// getJobByID retrieves a JobObj by its jobID from the in-memory jobs map if present,
+// otherwise fetches it from the database and caches it in the jobs map.
+// This function ensures that the returned JobObj is the canonical instance used by the executor.
+// If the job is not found in memory or the database, an error is returned.
+func (e *jobsExecutor) getJobByID(jobID uuid.UUID) (*JobObj, errorx.Error) {
+	e.mu.Lock()
+	if job, ok := e.jobsMap[jobID]; ok {
+		e.mu.Unlock()
+		return job, nil
 	}
+	e.mu.Unlock()
 
 	// Fallback to DB fetch
-	logging.Debug("job '%s' not found in queues, falling back to DB fetch", jobID)
-	return getJob(ctx, jobID)
+	job, errx := getJob(jobID)
+	if errx != nil {
+		logging.Debug("getJobByID(%s) - JOB NOT FOUND, stack: %s", jobID, string(debug.Stack()))
+		return nil, errx
+	}
+	e.trace("getJobByID(%s) - from DB, %s@%p, stack: %s", jobID, job.priv.JobID, job, string(debug.Stack()))
+
+	e.mu.Lock()
+	e.jobsMap[jobID] = job
+	e.mu.Unlock()
+
+	return job, nil
 }
 
-func (e *JobsExecutor) getByIdempotencyKey(ctx context.Context, idempotencyKey uuid.UUID) (*JobObj, errorx.Error) {
+// getJob retrieves a job from the in-memory cache if present, or adds the provided job to the cache if not.
+// This function ensures that only one instance of a job with a given JobID exists in the cache at a time.
+// The caller must invoke putJob() when the job is no longer needed to allow proper cache management.
+func (e *jobsExecutor) getJob(job *JobObj) (*JobObj, errorx.Error) {
+	e.trace("getJob(%s@%p), stack: %s", job.priv.JobID, job, string(debug.Stack()))
+	e.mu.Lock()
+	if j, ok := e.jobsMap[job.priv.JobID]; ok {
+		e.mu.Unlock()
+		return j, nil
+	}
+	e.jobsMap[job.priv.JobID] = job
+	e.mu.Unlock()
+
+	return job, nil
+}
+
+// The putJob() function removes the job from the cache if it's in the final state.
+func (e *jobsExecutor) putJob(job *JobObj) {
+	if job == nil {
+		panic("putJob called with nil job")
+	}
+
+	e.mu.Lock()
+
+	// put only jobs that are stored in DB, keep others in memory as they are
+	// frequently accessed
+
+	if _, ok := e.jobsMap[job.priv.JobID]; !ok {
+		panic(fmt.Sprintf("putJob(%s) - job not found in map", job.priv.JobID))
+	}
+
+	s := job.getStatus()
+
+	if s == StatusSuspended || s == StatusSkipped || s == StatusCanceled || s == StatusFailed || s == StatusTimedOut || s == StatusCompleted || s == StatusDeleted {
+		delete(e.jobsMap, job.priv.JobID)
+		e.trace("putJob(%s@%p) - detached from cache as status is '%s', stack: %s", job.priv.JobID, job, s, string(debug.Stack()))
+	} else {
+		e.trace("putJob(%s@%p) - keeping in cache as status is '%s', stack: %s", job.priv.JobID, job, s, string(debug.Stack()))
+	}
+
+	e.mu.Unlock()
+}
+
+// The lockJobByID() function retrieves the appropriate JobObj from the database and locks it.
+// If the database fails to find or fetch the job, the lock will not be held.
+func (e *jobsExecutor) lockJobByID(jobID uuid.UUID, timeout time.Duration) (*JobObj, errorx.Error) {
+	var jobLock *utils.DebugMutex
+	var ok bool
+
+	e.mu.Lock()
+	if jobLock, ok = e.jobsLockMap[jobID]; !ok {
+		jobLock = &utils.DebugMutex{}
+		e.jobsLockMap[jobID] = jobLock
+	}
+	e.mu.Unlock()
+
+	if timeout == 0 {
+		jobLock.Lock()
+	} else {
+		if !jobLock.TryLockWithTimeout(timeout) {
+			return nil, errorx.NewErrLocked("job lock timeout")
+		}
+	}
+
+	e.trace("lockJobByID(%s), stack: %s", jobID, debug.Stack())
+
+	job, errx := e.getJobByID(jobID)
+	if errx != nil {
+		// Don't call unlockJob with nil job - just unlock the mutex directly
+		jobLock.Unlock()
+		return nil, errx
+	}
+
+	return job, nil
+}
+
+// the lockJob() locks given job
+func (e *jobsExecutor) lockJob(job *JobObj, timeout time.Duration) (*JobObj, errorx.Error) {
+	var jobLock *utils.DebugMutex
+	var ok bool
+
+	e.mu.Lock()
+	if jobLock, ok = e.jobsLockMap[job.priv.JobID]; !ok {
+		jobLock = &utils.DebugMutex{}
+		e.jobsLockMap[job.priv.JobID] = jobLock
+	}
+	e.mu.Unlock()
+
+	e.trace("lockJob(%s@%p), stack: %s", job.priv.JobID, job, string(debug.Stack()))
+
+	if timeout == 0 {
+		jobLock.Lock()
+	} else if !jobLock.TryLockWithTimeout(timeout) {
+		return nil, errorx.NewErrLocked("job lock timeout")
+	}
+
+	return e.getJob(job)
+}
+
+func (e *jobsExecutor) jobTryLock(job *JobObj) bool {
+	var jobLock *utils.DebugMutex
+	var ok bool
+
+	e.mu.Lock()
+	if jobLock, ok = e.jobsLockMap[job.priv.JobID]; !ok {
+		jobLock = &utils.DebugMutex{}
+		e.jobsLockMap[job.priv.JobID] = jobLock
+	}
+	e.mu.Unlock()
+
+	return jobLock.TryLock()
+}
+
+// The unlockJob() function releases the lock on the job.
+func (e *jobsExecutor) unlockJob(job *JobObj) {
+	if job == nil {
+		panic("unlockJob called with nil job")
+	}
+
+	var jobLock *utils.DebugMutex
+	var ok bool
+
+	e.putJob(job)
+
+	e.mu.Lock()
+	if jobLock, ok = e.jobsLockMap[job.priv.JobID]; !ok {
+		panic(fmt.Sprintf("job lock for job %s not found", job.priv.JobID))
+	}
+	e.mu.Unlock()
+
+	e.trace("unlockJob(%s@%p), stack: %s", job.priv.JobID, job, string(debug.Stack()))
+
+	jobLock.Unlock()
+}
+
+func (e *jobsExecutor) getByIdempotencyKey(ctx context.Context, idempotencyKey uuid.UUID) (*JobObj, errorx.Error) {
 	job := &JobObj{}
-	err := db.DB.First(&job.private, "idempotency_key = ?", idempotencyKey).Error
+	err := db.DB().First(&job.priv, "idempotency_key = ?", idempotencyKey).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errorx.NewErrNotFound("job not found")
@@ -557,136 +731,154 @@ func (e *JobsExecutor) getByIdempotencyKey(ctx context.Context, idempotencyKey u
 		return nil, errorx.NewErrInternalServerError(err.Error())
 	}
 
-	return e.get(ctx, job.private.JobID)
-}
-
-// delete removes a job from the system.
-// It will attempt to cancel the job (if waiting) and then remove it from the persistent store.
-// Deletion of running jobs is not allowed.
-func (e *JobsExecutor) delete(ctx context.Context, jobID uuid.UUID, reason error) errorx.Error {
-	// Iterate over all queues to see if this job is in memory.
-	for _, queue := range e.queues {
-		queue.mu.Lock()
-		// Check if job is running.
-		if job, ok := queue.running[jobID]; ok {
-			queue.mu.Unlock()
-
-			if job.GetTenantID() != auth.GetTenantID() || job.GetUserID() != auth.GetUserID() {
-				return errorx.NewErrNotFound("job not found")
-			}
-
-			return errorx.NewErrNotImplemented("deleting a running job is not supported yet")
-		}
-
-		foundWaiting := false
-
-		// Check if job is waiting.
-		for i, job := range queue.waiting {
-			if job.GetJobID() != jobID {
-				continue
-			}
-
-			if job.GetTenantID() != auth.GetTenantID() || job.GetUserID() != auth.GetUserID() {
-				return errorx.NewErrNotFound("job not found")
-			}
-
-			queue.waiting = append(queue.waiting[:i], queue.waiting[i+1:]...)
-			job.setCancelled(ctx, reason)
-			foundWaiting = true
-			break
-		}
-		queue.mu.Unlock()
-		if foundWaiting {
-			break
-		}
-	}
-
-	// Delete the job record from the database.
-	if err := db.DB.Delete(&Job{}, "tenant_id = ? AND job_id = ?", auth.GetTenantID(), jobID).Error; err != nil {
-		return errorx.NewErrInternalServerError("failed to delete job from database: %v", err)
-	}
-
-	return nil
+	return e.getJobByID(job.GetJobID())
 }
 
 // Add this method to the JobsExecutor struct
-func (e *JobsExecutor) wait(ctx context.Context, jobID uuid.UUID, timeoutSec time.Duration) errorx.Error {
-	logging.Trace("Waiting for job %s to complete ...", jobID)
+func (e *jobsExecutor) wait(ctx context.Context, jobID uuid.UUID, timeout time.Duration) errorx.Error {
+	pollingInterval := min(timeout/2, 1*time.Second)
+
+	e.trace("wait(%s): waiting for job to complete with polling interval %.2f seconds...", jobID, pollingInterval.Seconds())
 
 	// Create a context with the job's timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeoutSec)
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Check job status periodically
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(pollingInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return errorx.NewErrLocked("job wait operation canceled")
 		case <-timeoutCtx.Done():
-			msg := fmt.Sprintf("job %s wait timed out after %.1f seconds, job is still running", jobID, timeoutSec.Seconds())
-			logging.Error(msg)
-			return errorx.NewStatusAccepted(msg)
+			currentJob, errx := e.lockJobByID(jobID, 0)
+			if errx != nil {
+				return errx
+			}
+			status := currentJob.getStatus()
+			if currentJob.statusIsFinal(status) {
+				e.trace("wait(%s): wait operation completed, job status: %s", jobID, status)
+				e.unlockJob(currentJob)
+				return nil
+			} else {
+				e.trace("wait(%s): wait timed out after %.2f seconds, job has not been completed yet (%s)", jobID, timeout.Seconds(), status)
+				e.unlockJob(currentJob)
+				return errorx.NewErrLocked("job has not been completed yet...")
+			}
 		case <-ticker.C:
-			// Get current job status
-			currentJob, errx := e.get(ctx, jobID)
+			currentJob, errx := e.lockJobByID(jobID, 100*time.Millisecond)
 			if errx != nil {
 				return errx
 			}
 
-			// Check if job is completed
-			switch currentJob.GetStatus() {
-			case JobStatusCompleted, JobStatusTimedOut, JobStatusFailed, JobStatusCanceled, JobStatusSuspended, JobStatusSkipped:
-				currentJob.LogTrace("job wait operation completed")
+			status := currentJob.getStatus()
+			e.trace("wait(%s): wait tick occurred, operation status: %s", jobID, status)
+			if currentJob.statusIsFinal(status) {
+				e.trace("wait(%s): wait operation completed, job status: %s", jobID, status)
+				e.unlockJob(currentJob)
 				return nil
 			}
+
+			e.unlockJob(currentJob)
 		}
 	}
 }
 
 // Shutdown signals all workers to stop.
-func (e *JobsExecutor) shutdown() {
-	close(e.shutdownSignal)
+func (e *jobsExecutor) shutdown() {
+	e.trace("shutdown()")
+	// Check if shutdown channel is not already closed
+	select {
+	case <-e.shutdownSignal:
+		// Channel already closed, do nothing
+	default:
+		// Channel is open, safe to close
+		close(e.shutdownSignal)
+	}
+	time.Sleep(100 * time.Millisecond) // Allow workers to shut down properly
 }
 
 // ----------------------------------------------------------------------
 // Convenience wrapper functions
 
+// Public interface available for the modules
+
+func JENewJob(ctx context.Context, idempotencyKey uuid.UUID, jobType *JobType, paramsStr string) (*JobObj, errorx.Error) {
+	return je.newJob(ctx, idempotencyKey, jobType, paramsStr)
+}
+
 func JEScheduleJob(ctx context.Context, job *JobObj) errorx.Error {
-	return jobsStore.schedule(ctx, job)
+	return je.schedule(ctx, job)
 }
 
-func JEWaitJob(ctx context.Context, jobID uuid.UUID, timeoutSec time.Duration) errorx.Error {
-	return jobsStore.wait(ctx, jobID, timeoutSec)
+func JEWaitJob(ctx context.Context, jobID uuid.UUID, timeout time.Duration) errorx.Error {
+	return je.wait(ctx, jobID, timeout)
 }
 
-func JEGetJob(ctx context.Context, jobID uuid.UUID) (*JobObj, errorx.Error) {
-	return jobsStore.get(ctx, jobID)
+func JEGetJobByID(ctx context.Context, jobID uuid.UUID) (*JobObj, errorx.Error) {
+	return je.getJobByID(jobID)
 }
 
-func JEGetJobByIdempotencyKey(ctx context.Context, idempotencyKey uuid.UUID) (*JobObj, errorx.Error) {
-	return jobsStore.getByIdempotencyKey(ctx, idempotencyKey)
+func JEGetJob(ctx context.Context, job *JobObj) (*JobObj, errorx.Error) {
+	return je.getJob(job)
 }
 
-func JECancelJob(ctx context.Context, jobID uuid.UUID, reason error) errorx.Error {
-	return jobsStore.cancel(ctx, jobID, reason)
+func jeGetJobByIdempotencyKey(ctx context.Context, idempotencyKey uuid.UUID) (*JobObj, errorx.Error) {
+	return je.getByIdempotencyKey(ctx, idempotencyKey)
 }
 
-func JEDeleteJob(ctx context.Context, jobID uuid.UUID, reason error) errorx.Error {
-	return jobsStore.delete(ctx, jobID, reason)
+func JECancelJob(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	return je.cancel(ctx, jobID, reason)
 }
 
-func JESuspendJob(ctx context.Context, jobID uuid.UUID) errorx.Error {
-	return jobsStore.suspend(ctx, jobID)
+func JESetSkipped(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	return je.setSkipped(ctx, jobID, reason)
 }
 
-func JEResumeJob(ctx context.Context, jobID uuid.UUID) errorx.Error {
-	return jobsStore.resume(ctx, jobID)
+func JESetResult(ctx context.Context, jobID uuid.UUID, result interface{}) errorx.Error {
+	return je.setResult(ctx, jobID, result)
 }
 
-func initJobQueues() error {
-	RegisterJobQueue(JobQueueCompute, 1)
-	RegisterJobQueue(JobQueueMaintenance, 5)
-	RegisterJobQueue(JobQueueDownload, 10)
-	return nil
+func JESetProgress(ctx context.Context, jobID uuid.UUID, progress float32) errorx.Error {
+	return je.setProgress(ctx, jobID, progress)
+}
+
+func JESetLockedBy(ctx context.Context, jobID uuid.UUID, lockedBy uuid.UUID) errorx.Error {
+	return je.setLockedBy(ctx, jobID, lockedBy)
+}
+
+func JESetUnlocked(ctx context.Context, jobID uuid.UUID) errorx.Error {
+	return je.setUnlocked(ctx, jobID)
+}
+
+// Private interface available for the job executor itself
+
+func jeDeleteJob(ctx context.Context, jobID uuid.UUID, reason string) errorx.Error {
+	return je.delete(ctx, jobID, reason)
+}
+
+func jeSuspendJob(ctx context.Context, jobID uuid.UUID) errorx.Error {
+	return je.suspend(ctx, jobID, "")
+}
+
+func jeResumeJob(ctx context.Context, jobID uuid.UUID) errorx.Error {
+	return je.resume(ctx, jobID, "")
+}
+
+func jeSetRetryPolicy(ctx context.Context, job *JobObj, retryDelay time.Duration, maxRetries int, timeout time.Duration) errorx.Error {
+	if job.priv.Status == JobStatusInit {
+		// FIXME: this is a hack to allow setting retry policy for jobs that are not stored into DB yet
+		return job.setRetryPolicy(retryDelay, maxRetries, timeout)
+	} else {
+		return je.setRetryPolicy(ctx, job.priv.JobID, retryDelay, maxRetries, timeout)
+	}
+}
+
+func JEShutdown() {
+	jobExecutorMu.Lock()
+	defer jobExecutorMu.Unlock()
+
+	close(je.shutdownSignal)
 }

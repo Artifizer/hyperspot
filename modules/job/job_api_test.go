@@ -14,29 +14,8 @@ import (
 	"github.com/hypernetix/hyperspot/libs/api"
 	"github.com/hypernetix/hyperspot/libs/db"
 	"github.com/hypernetix/hyperspot/libs/errorx"
-	"github.com/hypernetix/hyperspot/libs/orm"
 	"github.com/stretchr/testify/assert"
-	"gorm.io/gorm"
 )
-
-// setupTestDB initializes an in-memory SQLite DB and migrates the schema.
-func setupTestDBForAPI(t *testing.T) *gorm.DB {
-	testDB, err := db.InitInMemorySQLite(nil)
-	if err != nil {
-		t.Fatalf("Failed to connect to test DB: %v", err)
-	}
-	db.DB = testDB
-
-	err = orm.OrmInit(testDB)
-	if err != nil {
-		t.Fatalf("Failed to initialize ORM: %v", err)
-	}
-
-	if err := testDB.AutoMigrate(&Job{}, &JobGroup{}, &JobType{}); err != nil {
-		t.Fatalf("Failed to auto migrate schema: %v", err)
-	}
-	return testDB
-}
 
 // dummyPageRequest returns a simple page request.
 func dummyPageRequest() *api.PageAPIRequest {
@@ -45,12 +24,6 @@ func dummyPageRequest() *api.PageAPIRequest {
 		PageSize:   10,
 		Order:      "",
 	}
-}
-
-// Setup function to initialize job queues
-func setupJobQueuesForTest() {
-	// Initialize jobsStore if not already initialized
-	initJobQueues()
 }
 
 type testJobParams struct {
@@ -69,18 +42,16 @@ func getTestJobTypeForAPI() *JobType {
 					Queue:       JobQueueCompute,
 					Description: "Test group",
 				},
-				Name:                      "test_job_type_id",
-				Description:               "Test job type",
-				Params:                    &testJobParams{},
-				WorkerInitCallback:        func(ctx context.Context, job *JobObj) (JobWorker, errorx.Error) { return nil, nil },
-				WorkerExecutionCallback:   func(ctx context.Context, worker JobWorker, progress chan<- float32) error { return nil },
-				WorkerStateUpdateCallback: nil,
-				WorkerSuspendCallback:     nil,
-				WorkerResumeCallback:      nil,
-				Timeout:                   time.Hour * 3,
-				RetryDelay:                time.Second * 30,
-				MaxRetries:                5,
-				WorkerIsSuspendable:       false,
+				Name:                           "test_job_type_id",
+				Description:                    "Test job type",
+				Params:                         &testJobParams{},
+				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+				WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+				WorkerStateUpdateCallback:      nil,
+				Timeout:                        time.Hour * 3,
+				RetryDelay:                     time.Second * 30,
+				MaxRetries:                     5,
+				WorkerIsSuspendable:            false,
 			},
 		)
 	}
@@ -88,15 +59,14 @@ func getTestJobTypeForAPI() *JobType {
 }
 
 // TestAPIGetJob_InvalidUUID verifies that APIGetJob returns an error when given an invalid UUID.
-func TestAPIGetJob_InvalidUUID(t *testing.T) {
-	setupTestDBForAPI(t)
+func TestJobAPI_GetJob_InvalidUUID(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
 	input := &struct {
-		JobID string `path:"job_id"`
+		JobID uuid.UUID `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{
-		JobID: "invalid-uuid",
+		JobID: uuid.Nil,
 	}
 
 	_, err := japi.APIGetJob(ctx, input)
@@ -109,17 +79,14 @@ func TestAPIGetJob_InvalidUUID(t *testing.T) {
 }
 
 // TestAPIGetJob_NotFound verifies that APIGetJob returns a proper error for a valid UUID that is not in the DB.
-func TestAPIGetJob_NotFound(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_GetJob_NotFound(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
 	// Use a valid random UUID that is not stored.
-	validUUID := uuid.New().String()
+	validUUID := uuid.New()
 	input := &struct {
-		JobID string `path:"job_id"`
+		JobID uuid.UUID `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{
 		JobID: validUUID,
 	}
@@ -127,16 +94,13 @@ func TestAPIGetJob_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Expected error for job not found, got nil")
 	}
-	if !strings.Contains(err.Error(), "Job not found") {
-		t.Fatalf("Expected 'Job not found' error, got: %v", err)
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("Expected 'not found' error, got: %v", err)
 	}
 }
 
 // TestAPIGetJob_Success creates a dummy job in the DB and retrieves it via APIGetJob.
-func TestAPIGetJob_Success(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_GetJob_Success(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -144,20 +108,20 @@ func TestAPIGetJob_Success(t *testing.T) {
 
 	// Create a dummy job.
 	idempotency := uuid.New()
-	job, err := NewJob(ctx, idempotency, jt, `{}`)
+	job, err := JENewJob(ctx, idempotency, jt, `{}`)
 	if err != nil {
 		t.Fatalf("NewJob error: %v", err)
 	}
 
 	input := &struct {
-		JobID string `path:"job_id"`
+		JobID uuid.UUID `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{
-		JobID: job.GetJobID().String(),
+		JobID: job.GetJobID(),
 	}
 
-	resp, err := japi.APIGetJob(ctx, input)
-	if err != nil {
-		t.Fatalf("APIGetJob error: %v", err)
+	resp, errx := japi.APIGetJob(ctx, input)
+	if errx != nil {
+		t.Fatalf("APIGetJob error: %v", errx)
 	}
 	if resp.Body.JobID != job.GetJobID() {
 		t.Fatalf("Expected job ID %s, got %s", job.GetJobID().String(), resp.Body.JobID)
@@ -167,10 +131,7 @@ func TestAPIGetJob_Success(t *testing.T) {
 }
 
 // TestAPIListJobTypes_Empty verifies that APIListJobTypes returns zero total when no job types are registered.
-func TestAPIListJobTypes_Empty(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_ListJobTypes_Empty(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 	req := dummyPageRequest()
@@ -190,10 +151,7 @@ func TestAPIListJobTypes_Empty(t *testing.T) {
 // Additional tests for APIListJobGroups, APIGetJobGroup, etc. could be added here.
 
 // TestAPICancelJob verifies that the APICancelJob endpoint cancels a 'waiting' job.
-func TestAPICancelJob(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APICancelJob(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -201,29 +159,29 @@ func TestAPICancelJob(t *testing.T) {
 	assert.NotNil(t, jt)
 
 	// Create a dummy job.
-	job, err := NewJob(ctx, uuid.New(), jt, `{}`)
+	job, err := JENewJob(ctx, uuid.New(), jt, `{}`)
 	if err != nil {
 		t.Fatalf("NewJob error: %v", err)
 	}
 	// Set the job to a cancellable state.
-	job.setStatus(ctx, JobStatusWaiting, nil)
+	job.setStatus(JobStatusWaiting, "")
 
 	// Prepare input for APICancelJob.
 	input := &struct {
-		JobID string `path:"job_id"`
+		JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{JobID: job.GetJobID().String()}
 
 	// Call APICancelJob.
-	_, err = japi.APICancelJob(ctx, input)
-	if err != nil {
-		t.Fatalf("APICancelJob error: %v", err)
+	_, errx := japi.APICancelJob(ctx, input)
+	if errx != nil {
+		t.Fatalf("APICancelJob error: %v", errx)
 	}
 
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify that the job status is canceled.
 	var fetched Job
-	if err := db.DB.First(&fetched, "job_id = ?", job.GetJobID()).Error; err != nil {
+	if err := db.DB().First(&fetched, "job_id = ?", job.GetJobID()).Error; err != nil {
 		t.Fatalf("Failed to fetch job: %v", err)
 	}
 	if fetched.Status != "canceled" {
@@ -232,10 +190,7 @@ func TestAPICancelJob(t *testing.T) {
 }
 
 // TestAPIDeleteJob verifies that the APIDeleteJob endpoint deletes a job.
-func TestAPIDeleteJob(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIDeleteJob(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -243,34 +198,34 @@ func TestAPIDeleteJob(t *testing.T) {
 	assert.NotNil(t, jt)
 
 	// Create a dummy job.
-	job, err := NewJob(ctx, uuid.New(), jt, `{}`)
-	if err != nil {
-		t.Fatalf("NewJob error: %v", err)
+	job, errx := JENewJob(ctx, uuid.New(), jt, `{}`)
+	if errx != nil {
+		t.Fatalf("NewJob error: %v", errx)
 	}
+
+	// Set the job to a stable state that won't be processed by workers
+	job.setStatus(JobStatusCompleted, "Test job for deletion")
 
 	// Prepare input for APIDeleteJob.
 	input := &struct {
-		JobID string `path:"job_id"`
+		JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{JobID: job.GetJobID().String()}
 
-	_, err = japi.APIDeleteJob(ctx, input)
+	_, err := japi.APIDeleteJob(ctx, input)
 	if err != nil {
 		t.Fatalf("APIDeleteJob error: %v", err)
 	}
 
 	// Verify job deletion.
 	var fetched JobObj
-	err = db.DB.First(&fetched, "job_id = ?", job.GetJobID()).Error
+	err = db.DB().First(&fetched, "job_id = ?", job.GetJobID()).Error
 	if err == nil {
 		t.Fatalf("Expected job to be deleted, but it still exists")
 	}
 }
 
 // TestAPIScheduleJob verifies that the APIScheduleJob endpoint schedules a new job.
-func TestAPIScheduleJob(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIScheduleJob(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -311,7 +266,7 @@ func TestAPIScheduleJob(t *testing.T) {
 	if jobID == uuid.Nil {
 		t.Fatalf("APIScheduleJob returned nil job")
 	}
-	job, err := JEGetJob(ctx, jobID)
+	job, err := JEGetJobByID(ctx, jobID)
 	if err != nil {
 		t.Fatalf("JEGetJob error: %v", err)
 	}
@@ -327,15 +282,13 @@ func TestAPIScheduleJob(t *testing.T) {
 		t.Fatalf("JEWaitJob error: %v", err)
 	}
 
-	if job.GetStatus() != JobStatusCompleted {
-		t.Fatalf("Expected job status %s, got %s", JobStatusCompleted, job.GetStatus())
+	status := job.GetStatus()
+	if status != JobStatusCompleted {
+		t.Fatalf("Expected job status %s, got %s", JobStatusCompleted, status)
 	}
 }
 
-func TestAPIScheduleJob_WrongGroup(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIScheduleJob_WrongGroup(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -369,10 +322,7 @@ func TestAPIScheduleJob_WrongGroup(t *testing.T) {
 }
 
 // TestAPIListJobs verifies that the APIListJobs endpoint returns created jobs.
-func TestAPIListJobs(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIListJobs(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -380,13 +330,13 @@ func TestAPIListJobs(t *testing.T) {
 	assert.NotNil(t, jt)
 
 	// Create a couple of dummy jobs.
-	_, err := NewJob(ctx, uuid.New(), jt, `{}`)
-	if err != nil {
-		t.Fatalf("NewJob error: %v", err)
+	_, errx := JENewJob(ctx, uuid.New(), jt, `{}`)
+	if errx != nil {
+		t.Fatalf("NewJob error: %v", errx)
 	}
-	_, err = NewJob(ctx, uuid.New(), jt, `{}`)
-	if err != nil {
-		t.Fatalf("NewJob error: %v", err)
+	_, errx = JENewJob(ctx, uuid.New(), jt, `{}`)
+	if errx != nil {
+		t.Fatalf("NewJob error: %v", errx)
 	}
 
 	req := &api.PageAPIRequest{
@@ -404,10 +354,7 @@ func TestAPIListJobs(t *testing.T) {
 }
 
 // TestAPIGetJobGroup verifies that the APIGetJobGroup endpoint returns the details of a specific group.
-func TestAPIGetJobGroup(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIGetJobGroup(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -420,7 +367,7 @@ func TestAPIGetJobGroup(t *testing.T) {
 	RegisterJobGroup(group)
 
 	input := &struct {
-		Name string `path:"job_group_id"`
+		Name string `path:"job_group_id" doc:"The job group name" example:"llm_model_ops"`
 	}{Name: group.Name}
 
 	resp, err := japi.APIGetJobGroup(ctx, input)
@@ -437,10 +384,7 @@ func TestAPIGetJobGroup(t *testing.T) {
 }
 
 // TestAPIListJobGroups verifies that the APIListJobGroups endpoint returns all job groups.
-func TestAPIListJobGroups(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIListJobGroups(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -470,10 +414,7 @@ func TestAPIListJobGroups(t *testing.T) {
 }
 
 // TestAPIGetJobType verifies that the APIGetJobType endpoint returns details of a specific job type.
-func TestAPIGetJobType(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIGetJobType(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
@@ -485,24 +426,24 @@ func TestAPIGetJobType(t *testing.T) {
 				Queue:       JobQueueCompute,
 				Description: "Job group for get test",
 			},
-			Name:                    "update",
-			Description:             "Update a model",
-			Params:                  &struct{}{},
-			WorkerInitCallback:      func(ctx context.Context, job *JobObj) (JobWorker, errorx.Error) { return nil, nil },
-			WorkerExecutionCallback: func(ctx context.Context, worker JobWorker, progress chan<- float32) error { return nil },
-			Timeout:                 time.Hour * 3,
-			RetryDelay:              time.Second * 30,
-			MaxRetries:              5,
-			WorkerIsSuspendable:     false,
+			Name:                           "update",
+			Description:                    "Update a model",
+			Params:                         &struct{}{},
+			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			Timeout:                        time.Hour * 3,
+			RetryDelay:                     time.Second * 30,
+			MaxRetries:                     5,
+			WorkerIsSuspendable:            false,
 		},
 	)
 
-	if err := db.DB.Create(jt).Error; err != nil {
+	if err := db.DB().Create(jt).Error; err != nil {
 		t.Fatalf("Failed to create job type: %v", err)
 	}
 
 	input := &struct {
-		JobTypeID string `path:"job_type_id"`
+		JobTypeID string `path:"job_type_id" example:"llm_model_ops:load"`
 	}{JobTypeID: jt.TypeID}
 
 	resp, err := japi.APIGetJobType(ctx, input)
@@ -519,10 +460,7 @@ func TestAPIGetJobType(t *testing.T) {
 }
 
 // TestJobTypeToAPIResponse verifies that JobTypeToAPIResponse correctly converts a JobType.
-func TestJobTypeToAPIResponse(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_JobTypeToAPIResponse(t *testing.T) {
 	// Create a dummy job type.
 	jt := &JobType{
 		TypeID:      "convert:job:type",
@@ -537,8 +475,8 @@ func TestJobTypeToAPIResponse(t *testing.T) {
 		TimeoutSec:              60,
 		MaxRetries:              1,
 		RetryDelaySec:           2,
-		WorkerInitCallback:      func(ctx context.Context, job *JobObj) (JobWorker, errorx.Error) { return nil, nil },
-		WorkerExecutionCallback: func(ctx context.Context, worker JobWorker, progress chan<- float32) error { return nil },
+		WorkerInitCallback:      func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
 	}
 	japi := &JobAPI{}
 	resp := japi.JobTypeToAPIResponse(jt)
@@ -551,10 +489,7 @@ func TestJobTypeToAPIResponse(t *testing.T) {
 }
 
 // TestJobGroupToAPIResponse verifies that JobGroupToAPIResponse correctly converts a JobGroup.
-func TestJobGroupToAPIResponse(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_JobGroupToAPIResponse(t *testing.T) {
 	group := &JobGroup{
 		Name:        "convert:group",
 		Queue:       JobQueueCompute,
@@ -571,16 +506,13 @@ func TestJobGroupToAPIResponse(t *testing.T) {
 	}
 }
 
-func TestAPIMaflormedParams(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_APIMaflormedParams(t *testing.T) {
 	japi := &JobAPI{}
 	ctx := context.Background()
 
 	// Prepare input for APIDeleteJob.
 	input1 := &struct {
-		JobID string `path:"job_id"`
+		JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{JobID: uuid.New().String()}
 
 	_, err := japi.APIDeleteJob(ctx, input1)
@@ -595,7 +527,7 @@ func TestAPIMaflormedParams(t *testing.T) {
 
 	// Prepare input for APIDeleteJob.
 	input2 := &struct {
-		JobID string `path:"job_id"`
+		JobID string `path:"job_id" doc:"The job UUID" example:"550e8400-e29b-41d4-a716-446655440000"`
 	}{JobID: "malformed-job-id"}
 
 	_, err = japi.APIDeleteJob(ctx, input2)
@@ -608,10 +540,7 @@ func TestAPIMaflormedParams(t *testing.T) {
 	}
 }
 
-func TestRegisterJobAPIRoutes(t *testing.T) {
-	setupTestDBForAPI(t)
-	setupJobQueuesForTest()
-
+func TestJobAPI_RegisterJobAPIRoutes(t *testing.T) {
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("Test API", "1.0.0"))
 	registerJobAPIRoutes(api)

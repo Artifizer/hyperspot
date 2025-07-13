@@ -2,7 +2,6 @@ package job
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,11 +31,11 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 	batchSize := 50
 	totalJobs := 0
 	totalResumed := 0
-	totalCancelled := 0
+	totalCanceled := 0
 	totalFailed := 0
 	page := 0
 
-	reason := errors.New("suspended on service restart")
+	reason := "suspended on service restart"
 
 	for {
 		page++
@@ -48,7 +47,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 		}
 
 		// Find jobs in the specified states for the current page
-		jobs, err := ListJobs(ctx, pageRequest, statusFilter)
+		jobs, err := listJobs(ctx, pageRequest, statusFilter)
 		if err != nil {
 			return fmt.Errorf("failed to list in-progress jobs (page %d): %w", page, err)
 		}
@@ -61,32 +60,47 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 		logging.Debug("Processing jobs resume after service start, batch: %d, found %d in-progress jobs to resume", page, len(jobs))
 
 		for _, job := range jobs {
-			if job.statusIsFinal() {
+			status := job.GetStatus()
+			if job.statusIsFinal(status) {
 				continue
 			}
 
 			needToCancel := false
 			totalJobs++
 
-			if job.GetStatus() == JobStatusCanceling {
+			if status == JobStatusDeleted {
+				job.LogError("Job %s is deleted, skipping", job.priv.JobID)
+				continue
+			} else if status == JobStatusFailed {
+				job.LogError("Job %s is failed, skipping", job.priv.JobID)
+				continue
+			} else if status == JobStatusTimedOut {
+				job.LogError("Job %s is timed out, skipping", job.priv.JobID)
+				needToCancel = true
+			} else if status == JobStatusCanceling {
 				needToCancel = true
 			} else if job.GetTypePtr().WorkerIsSuspendable {
 				// First suspend the job in memory (which doesn't require database access)
 				// Then update the entry state in the database afterward
-				err := job.setSuspending(ctx, reason)
+				err := job.setSuspending(reason)
 				if err != nil {
 					job.LogError("Failed to suspend job: %s", err.Error())
 					needToCancel = true
 				} else {
-					err = job.setSuspended(ctx, reason)
+					err = job.setSuspended(reason)
 					if err != nil {
 						job.LogError("Failed to suspend job: %s", err.Error())
 						needToCancel = true
 					}
-					job.private.Error = reason.Error()
-					job.dbSaveFields(&job.private.Error)
+					job.priv.Error = reason
 
-					errx := JEResumeJob(ctx, job.GetJobID())
+					job.mu.Lock()
+					if err := job.dbSaveFields(&job.priv.Error); err != nil {
+						job.LogError("Failed to save job error field: %v", err)
+					}
+					job.mu.Unlock()
+
+					errx := jeResumeJob(ctx, job.GetJobID())
 					if errx == nil {
 						totalResumed++
 						job.LogInfo("resumed on service start")
@@ -101,21 +115,23 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 			if needToCancel {
 				// First cancel the job in memory (which doesn't require database access)
 				// Then update the entry state in the database afterward
-				err := job.setCanceling(ctx, reason)
+				err := job.setCanceling(reason)
 				if err != nil {
 					logging.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
 					totalFailed++
 					continue
 				} else {
-					err = job.setCancelled(ctx, reason)
+					err = job.setCanceled(reason)
 					if err != nil {
 						logging.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
 						totalFailed++
 						continue
 					}
-					job.private.Error = reason.Error()
-					job.dbSaveFields(&job.private.Error)
-					totalCancelled++
+					job.priv.Error = reason
+					if err := job.dbSaveFields(&job.priv.Error); err != nil {
+						job.LogError("Failed to save job error field: %v", err)
+					}
+					totalCanceled++
 				}
 			}
 		}
@@ -131,7 +147,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 
 	if totalJobs > 0 {
 		logging.Info("Completed in-progress jobs resume after server restart: %d jobs resumed, %d jobs canceled, %d jobs failed",
-			totalResumed, totalCancelled, totalFailed)
+			totalResumed, totalCanceled, totalFailed)
 	}
 	return nil
 }
