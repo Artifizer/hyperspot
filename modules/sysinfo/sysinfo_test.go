@@ -18,8 +18,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	testDB, err := db.InitInMemorySQLite(nil)
 	require.NoError(t, err, "Failed to connect to test DB")
 
-	db.DB = testDB
-	err = testDB.AutoMigrate(
+	db.SetDB(testDB)
+	err = db.SafeAutoMigrate(testDB,
 		&utils.SystemInfo{},
 	)
 	require.NoError(t, err, "Failed to migrate test database")
@@ -76,8 +76,8 @@ func createTestSystemInfo() *utils.SystemInfo {
 		},
 		CPU: struct {
 			Model     string  `json:"model" gorm:"column:cpu_model"`
-			NumCPUs   int     `json:"num_cpus" gorm:"column:cpu_num_cpus"`
-			Cores     int     `json:"cores" gorm:"column:cpu_cores"`
+			NumCPUs   uint    `json:"num_cpus" gorm:"column:cpu_num_cpus"`
+			Cores     uint    `json:"cores" gorm:"column:cpu_cores"`
 			Frequency float64 `json:"frequency_mhz" gorm:"column:cpu_frequency_mhz"`
 		}{
 			Model:     "test-cpu",
@@ -145,10 +145,10 @@ func TestSaveSysInfoToDB(t *testing.T) {
 
 func TestGetSysInfoPersisted(t *testing.T) {
 	// Set up test database
-	originalDB := db.DB
+	originalDB := db.DB()
 	defer func() {
 		// Restore original DB after test
-		db.DB = originalDB
+		db.SetDB(originalDB)
 	}()
 
 	setupTestDB(t)
@@ -189,7 +189,7 @@ func TestGetSysInfoPersisted(t *testing.T) {
 		require.NoError(t, err)
 
 		// Set the global DB to the closed database
-		db.DB = testDB
+		db.SetDB(testDB)
 
 		// Call the function under test
 		sysInfo, err := sysinfo.GetSysInfoPersisted()

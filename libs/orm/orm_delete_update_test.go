@@ -33,7 +33,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	testDB, err := db.InitInMemorySQLite(nil)
 	require.NoError(t, err, "Failed to connect to test DB")
-	db.DB = testDB
+	db.SetDB(testDB)
 	OrmInit(testDB)
 	err = db.SafeAutoMigrate(testDB, &TestDeleteStruct{}, &TestUpdateStruct{})
 	require.NoError(t, err, "Failed to migrate test database")
@@ -47,19 +47,19 @@ func setupTestDB(t *testing.T) *gorm.DB {
 // Helper function to count records
 func countDelete(t *testing.T) int64 {
 	var count int64
-	db.DB.Model(&TestDeleteStruct{}).Count(&count)
+	db.DB().Model(&TestDeleteStruct{}).Count(&count)
 	return count
 }
 
 func countUpdate(t *testing.T) int64 {
 	var count int64
-	db.DB.Model(&TestUpdateStruct{}).Count(&count)
+	db.DB().Model(&TestUpdateStruct{}).Count(&count)
 	return count
 }
 
 func countValue(t *testing.T, v int) int64 {
 	var count int64
-	db.DB.Model(&TestUpdateStruct{}).Where("value = ?", v).Count(&count)
+	db.DB().Model(&TestUpdateStruct{}).Where("value = ?", v).Count(&count)
 	return count
 }
 
@@ -75,26 +75,26 @@ func TestOrmDeleteObjs(t *testing.T) {
 				Name:        fmt.Sprintf("Test Record %d", i),
 				CreatedAtMs: time.Now().UnixMilli(),
 			}
-			result := db.DB.Create(&record)
+			result := db.DB().Create(&record)
 			require.NoError(t, result.Error, "Failed to create test record")
 		}
 	}
 
 	t.Run("DeleteAllRecords", func(t *testing.T) {
 		// Clean up before test
-		db.DB.Exec("DELETE FROM test_delete_structs")
+		db.DB().Exec("DELETE FROM test_delete_structs")
 
 		// Create test records
 		create(5)
 
 		// Verify records were created
 		var count int64
-		result := db.DB.Model(&TestDeleteStruct{}).Count(&count)
+		result := db.DB().Model(&TestDeleteStruct{}).Count(&count)
 		require.NoError(t, result.Error, "Failed to count records: %s", result.Error)
 		assert.Equal(t, int64(5), count, "Should have created 5 records")
 
 		// Delete all records via query
-		deleted, err := OrmDeleteObjs(db.DB.Model(&TestDeleteStruct{}), "id", 0, 2)
+		deleted, err := OrmDeleteObjs(db.DB().Model(&TestDeleteStruct{}), "id", 0, 2)
 		require.NoError(t, err, "Failed to delete records: %v", err)
 		assert.Equal(t, int64(5), deleted, "Should have deleted 5 records")
 		assert.Equal(t, int64(0), countDelete(t))
@@ -102,7 +102,7 @@ func TestOrmDeleteObjs(t *testing.T) {
 
 	t.Run("DeleteWithFilter", func(t *testing.T) {
 		// Clean up before test
-		db.DB.Exec("DELETE FROM test_delete_structs")
+		db.DB().Exec("DELETE FROM test_delete_structs")
 
 		// Create test records
 		create(3)
@@ -113,20 +113,20 @@ func TestOrmDeleteObjs(t *testing.T) {
 			Name:        "Specific Record",
 			CreatedAtMs: time.Now().UnixMilli(),
 		}
-		result := db.DB.Create(&specificRecord)
+		result := db.DB().Create(&specificRecord)
 		require.NoError(t, result.Error, "Failed to create specific record")
 
 		// Delete only the specific record
 		filter := map[string]interface{}{
 			"name": "Specific Record",
 		}
-		deleted, err := OrmDeleteObjs(db.DB.Model(&TestDeleteStruct{}).Where(filter), "id", 0, 10)
+		deleted, err := OrmDeleteObjs(db.DB().Model(&TestDeleteStruct{}).Where(filter), "id", 0, 10)
 		require.NoError(t, err, "Failed to delete records with filter")
 		assert.Equal(t, int64(1), deleted, "Should have deleted 1 record")
 
 		// Verify the correct records were deleted
 		var remaining []TestDeleteStruct
-		db.DB.Find(&remaining)
+		db.DB().Find(&remaining)
 		for _, r := range remaining {
 			assert.NotEqual(t, r.Name, "Specific Record")
 		}
@@ -134,13 +134,13 @@ func TestOrmDeleteObjs(t *testing.T) {
 
 	t.Run("DeleteWithLimit", func(t *testing.T) {
 		// Clean up before test
-		db.DB.Exec("DELETE FROM test_delete_structs")
+		db.DB().Exec("DELETE FROM test_delete_structs")
 
 		// Create test records
 		create(4)
 
 		// Delete only 2 records
-		deleted, err := OrmDeleteObjs(db.DB.Model(&TestDeleteStruct{}), "id", 2, 10)
+		deleted, err := OrmDeleteObjs(db.DB().Model(&TestDeleteStruct{}), "id", 2, 10)
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), deleted)
 		assert.Equal(t, int64(2), countDelete(t))
@@ -165,21 +165,21 @@ func TestOrmUpdateObjs(t *testing.T) {
 				Value:       i,
 				CreatedAtMs: time.Now().UnixMilli(),
 			}
-			result := db.DB.Create(&record)
+			result := db.DB().Create(&record)
 			require.NoError(t, result.Error, "Failed to create test record")
 		}
 	}
 
 	t.Run("UpdateAllRecords", func(t *testing.T) {
 		// Clean up before test
-		db.DB.Exec("DELETE FROM test_update_structs")
+		db.DB().Exec("DELETE FROM test_update_structs")
 
 		// Create test records
 		create(4)
 
 		// Verify records were created
 		var count int64
-		result := db.DB.Model(&TestUpdateStruct{}).Count(&count)
+		result := db.DB().Model(&TestUpdateStruct{}).Count(&count)
 		require.NoError(t, result.Error, "Failed to count records")
 		assert.Equal(t, int64(4), count, "Should have created 4 records")
 
@@ -187,7 +187,7 @@ func TestOrmUpdateObjs(t *testing.T) {
 		updates := map[string]interface{}{
 			"value": 9,
 		}
-		updated, err := OrmUpdateObjs(db.DB.Model(&TestUpdateStruct{}), "id", updates, 0, 2)
+		updated, err := OrmUpdateObjs(db.DB().Model(&TestUpdateStruct{}), "id", updates, 0, 2)
 		require.NoError(t, err)
 		assert.Equal(t, int64(4), updated)
 		assert.Equal(t, int64(4), countValue(t, 9))
@@ -195,7 +195,7 @@ func TestOrmUpdateObjs(t *testing.T) {
 
 	t.Run("UpdateWithEqualityFilter", func(t *testing.T) {
 		// Clean up before test
-		db.DB.Exec("DELETE FROM test_update_structs")
+		db.DB().Exec("DELETE FROM test_update_structs")
 
 		// Create test records
 		create(5)
@@ -203,7 +203,7 @@ func TestOrmUpdateObjs(t *testing.T) {
 		// Update only one record with value equal to 1
 		updates := map[string]interface{}{"value": 42}
 		filter := map[string]interface{}{"value": 1}
-		updated, err := OrmUpdateObjs(db.DB.Model(&TestUpdateStruct{}).Where(filter), "id", updates, 0, 1)
+		updated, err := OrmUpdateObjs(db.DB().Model(&TestUpdateStruct{}).Where(filter), "id", updates, 0, 1)
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), updated)
 		assert.Equal(t, int64(1), countValue(t, 42))
@@ -215,7 +215,7 @@ func TestOrmUpdateObjs(t *testing.T) {
 		assert.Error(t, err)
 
 		// Test with empty updates
-		_, err = OrmUpdateObjs(db.DB.Model(&TestUpdateStruct{}), "id", map[string]interface{}{}, 0, 1)
+		_, err = OrmUpdateObjs(db.DB().Model(&TestUpdateStruct{}), "id", map[string]interface{}{}, 0, 1)
 		assert.Error(t, err)
 	})
 }

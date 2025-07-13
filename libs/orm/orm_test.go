@@ -137,7 +137,7 @@ func TestGetBaseQuery(t *testing.T) {
 	t.Run("WithNilDB", func(t *testing.T) {
 		// We don't need to modify the actual db.DB here, just pass nil to our test function
 		obj := SimpleStruct{}
-		db.DB = nil
+		db.SetDB(nil)
 		request := &api.PageAPIRequest{}
 
 		query, err := GetBaseQuery(obj, uuid.Nil, uuid.Nil, request)
@@ -458,7 +458,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 	db.StartDBServer()
 
 	// Migrate test tables first
-	if err := db.SafeAutoMigrate(db.DB, &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
+	if err := db.SafeAutoMigrate(db.DB(), &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
 		t.Fatalf("Failed to migrate test tables: %v", err)
 	}
 
@@ -471,7 +471,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Update the name field
@@ -483,7 +483,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 
 		// Fetch the record to verify update
 		var fetched SimpleStruct
-		err = db.DB.First(&fetched, "id = ?", obj.ID).Error
+		err = db.DB().First(&fetched, "id = ?", obj.ID).Error
 		require.NoError(t, err)
 
 		// Verify only the name was updated
@@ -501,7 +501,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 			CreatedAt: time.Now().Add(-24 * time.Hour), // Yesterday
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Update multiple fields
@@ -515,7 +515,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 
 		// Fetch the record to verify update
 		var fetched SimpleStruct
-		err = db.DB.First(&fetched, "id = ?", obj.ID).Error
+		err = db.DB().First(&fetched, "id = ?", obj.ID).Error
 		require.NoError(t, err)
 
 		// Verify only the specified fields were updated
@@ -533,7 +533,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 			IgnoredField: "Ignored",
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Update the field with custom column name
@@ -546,7 +546,7 @@ func TestOrmUpdateObjFields(t *testing.T) {
 
 		// Fetch the record to verify update
 		var fetched StructWithColumnOverride
-		err = db.DB.First(&fetched, "id = ?", obj.ID).Error
+		err = db.DB().First(&fetched, "id = ?", obj.ID).Error
 		require.NoError(t, err)
 
 		// Verify the fields were updated with correct column names
@@ -597,7 +597,7 @@ func TestOrmGetObjFields(t *testing.T) {
 	db.StartDBServer()
 
 	// Migrate test tables first
-	if err := db.SafeAutoMigrate(db.DB, &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
+	if err := db.SafeAutoMigrate(db.DB(), &SimpleStruct{}, &StructWithColumnOverride{}); err != nil {
 		t.Fatalf("Failed to migrate test tables: %v", err)
 	}
 
@@ -610,7 +610,7 @@ func TestOrmGetObjFields(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Create a new object to get fields into
@@ -639,7 +639,7 @@ func TestOrmGetObjFields(t *testing.T) {
 			CreatedAt: testTime,
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Create a new object to get fields into
@@ -666,7 +666,7 @@ func TestOrmGetObjFields(t *testing.T) {
 			IgnoredField: "Ignored",
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Create a new object to get fields into
@@ -694,7 +694,7 @@ func TestOrmGetObjFields(t *testing.T) {
 			CreatedAt: time.Now(),
 		}
 
-		err := db.DB.Create(obj).Error
+		err := db.DB().Create(obj).Error
 		require.NoError(t, err)
 
 		// Create a new object to get fields into

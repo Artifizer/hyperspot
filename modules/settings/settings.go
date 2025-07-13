@@ -25,7 +25,7 @@ type Settings struct {
 
 func getSettings(ctx context.Context) (*Settings, errorx.Error) {
 	var settings Settings
-	if err := db.DB.Where("tenant_id = ? AND user_id = ?", auth.GetTenantID(), auth.GetUserID()).First(&settings).Error; err != nil {
+	if err := db.DB().Where("tenant_id = ? AND user_id = ?", auth.GetTenantID(), auth.GetUserID()).First(&settings).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			settings.UserID = auth.GetUserID()
 			settings.TenantID = auth.GetTenantID()
@@ -47,17 +47,17 @@ func updateSettings(ctx context.Context, settings *Settings) errorx.Error {
 
 	// Check if the record exists
 	var count int64
-	if err := db.DB.Model(&Settings{}).Where("user_id = ? AND tenant_id = ?", settings.UserID, settings.TenantID).Count(&count).Error; err != nil {
+	if err := db.DB().Model(&Settings{}).Where("user_id = ? AND tenant_id = ?", settings.UserID, settings.TenantID).Count(&count).Error; err != nil {
 		return errorx.NewErrInternalServerError(err.Error())
 	}
 
 	// If record doesn't exist, create it; otherwise, update it
 	if count == 0 {
-		if err := db.DB.Create(settings).Error; err != nil {
+		if err := db.DB().Create(settings).Error; err != nil {
 			return errorx.NewErrInternalServerError(err.Error())
 		}
 	} else {
-		if err := db.DB.Where("user_id = ? AND tenant_id = ?", settings.UserID, settings.TenantID).Updates(settings).Error; err != nil {
+		if err := db.DB().Where("user_id = ? AND tenant_id = ?", settings.UserID, settings.TenantID).Updates(settings).Error; err != nil {
 			return errorx.NewErrInternalServerError(err.Error())
 		}
 	}

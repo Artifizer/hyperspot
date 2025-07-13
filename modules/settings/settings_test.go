@@ -16,8 +16,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	testDB, err := db.InitInMemorySQLite(nil)
 	require.NoError(t, err, "Failed to connect to test DB")
-	db.DB = testDB
-	err = testDB.AutoMigrate(&Settings{})
+	db.SetDB(testDB)
+	err = db.SafeAutoMigrate(testDB, &Settings{})
 	require.NoError(t, err, "Failed to migrate test database")
 	return testDB
 }
