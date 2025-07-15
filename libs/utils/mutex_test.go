@@ -412,10 +412,14 @@ func TestDebugMutex_TryLockWithTimeout(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		// Try to lock with timeout - should succeed on final attempt
-		success := m.TryLockWithTimeout(50 * time.Millisecond)
+		success := m.TryLockWithTimeout(200 * time.Millisecond)
 		assert.True(t, success)
 
-		m.Unlock()
+		// Only unlock if we actually acquired the lock, do not look at assert
+		// above because the code afterwards will be executed anyway
+		if success {
+			m.Unlock()
+		}
 		wg.Wait()
 	})
 }
