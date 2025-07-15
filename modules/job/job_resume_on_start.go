@@ -127,10 +127,6 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 						totalFailed++
 						continue
 					}
-					job.priv.Error = reason
-					if err := job.dbSaveFields(&job.priv.Error); err != nil {
-						job.LogError("Failed to save job error field: %v", err)
-					}
 					totalCanceled++
 				}
 			}
