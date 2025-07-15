@@ -27,7 +27,7 @@ type TestModuleJobParams struct {
 }
 
 // testModuleJobWorker is the main worker function for the test job
-func testModuleJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+func testModuleJobWorker(ctx context.Context, job *job.JobObj) errorx.Error {
 	params, ok := job.GetParamsPtr().(*TestModuleJobParams)
 	if !ok {
 		return errorx.NewErrInternalServerError("invalid job parameters type; expected *TestModuleJobParams")
@@ -62,7 +62,6 @@ func testModuleJobWorker(ctx context.Context, job *job.JobObj, progress chan<- f
 		if err := job.SetProgress(ctx, progressValue); err != nil {
 			return errorx.NewErrInternalServerError("failed to set progress: %w", err)
 		}
-		progress <- progressValue
 	}
 
 	return nil

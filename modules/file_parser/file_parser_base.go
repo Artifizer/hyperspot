@@ -1,7 +1,6 @@
 package file_parser
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,9 +20,9 @@ import (
 
 var logger = logging.MainLogger
 
-// FileParser interface that different implementations will fulfill
+// DocumentParser interface that different implementations will fulfill
 type FileParser interface {
-	Parse(ctx context.Context, reader io.Reader, doc *document.Document) errorx.Error
+	Parse(ctx context.Context, path string, doc *document.Document) errorx.Error
 }
 
 // Type definition for parser constructor functions
@@ -147,18 +146,9 @@ func ParseLocalDocument(path string) (*document.Document, errorx.Error) {
 		return doc, newUnsupportedFileTypeError(ext)
 	}
 
-	// Open file for reading
-	file, err := os.Open(path)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to open file: %v", err)
-		logger.Error("%s", msg)
-		return nil, errorx.NewErrInternalServerError(msg)
-	}
-	defer file.Close()
-
 	// Use the appropriate parser
 	ctx := context.Background()
-	err = parser.Parse(ctx, file, doc)
+	err = parser.Parse(ctx, path, doc)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to parse document: %v", err)
 		logger.Error("%s", msg)
@@ -212,12 +202,18 @@ func ParseURL(url string) (*document.Document, errorx.Error) {
 		return doc, errorx.NewErrBadRequest(msg)
 	}
 
-	// Create a reader from the content
-	reader := bytes.NewReader(content)
+	// For URL parsing, we need to create a temporary file since parsers expect file paths
+	tempFile, err := createTempFile(content, ext)
+	if err != nil {
+		msg := fmt.Sprintf("Failed to create temporary file: %v", err)
+		logger.Error("%s", msg)
+		return doc, errorx.NewErrInternalServerError(msg)
+	}
+	defer os.Remove(tempFile) // Clean up temp file
 
 	// Use the appropriate parser
 	ctx := context.Background()
-	err := parser.Parse(ctx, reader, doc)
+	err = parser.Parse(ctx, tempFile, doc)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to parse document from URL: %v", err)
 		logger.Error("%s", msg)
@@ -251,13 +247,18 @@ func ParseUploadedDocument(data []byte, filename string) (*document.Document, er
 		return doc, newUnsupportedFileTypeError(ext)
 	}
 
-	// Create a reader from the data
-	reader := bytes.NewReader(data)
+	// Create a temporary file to store the uploaded data
+	tempFile, err := createTempFile(data, ext)
+	if err != nil {
+		logger.Error("Failed to create temp file for uploaded document: %v", err)
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tempFile) // Clean up temp file when done
 
 	// Parse the document using the appropriate parser
 	logger.Info("Parsing uploaded file with type: %s", ext)
 	ctx := context.Background()
-	if parseErr := parser.Parse(ctx, reader, doc); parseErr != nil {
+	if parseErr := parser.Parse(ctx, tempFile, doc); parseErr != nil {
 		logger.Error("Failed to parse uploaded document: %v", parseErr)
 		return doc, parseErr
 	}

@@ -301,21 +301,9 @@ func (e *jobsExecutor) executeJob(ctx context.Context, job *JobObj) errorx.Error
 		return errorx.NewErrInternalServerError("job %s is not running, it is %s", job.priv.JobID, status)
 	}
 
-	progress := make(chan float32)
-	defer close(progress)
-
-	// Propagate progress updates.
-	go func() {
-		for p := range progress {
-			if err := job.setProgress(p); err != nil {
-				job.LogWarn("executeJob(%s): Failed to set progress: %v", job.priv.JobID, err)
-			}
-		}
-	}()
-
 	if job.GetTypePtr() != nil && job.GetTypePtr().WorkerExecutionCallback != nil {
 		// Execute the job-specific worker.
-		errx := job.GetTypePtr().WorkerExecutionCallback(ctx, job, progress)
+		errx := job.GetTypePtr().WorkerExecutionCallback(ctx, job)
 		if errx != nil {
 			return errx
 		}

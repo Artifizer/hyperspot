@@ -2,8 +2,7 @@ package file_parser
 
 import (
 	"context"
-	"errors"
-	"io"
+	"os"
 
 	"github.com/Artifizer/pdf"
 	"github.com/hypernetix/hyperspot/libs/document"
@@ -16,33 +15,31 @@ var pdfLogger = logging.NewLogger(logging.InfoLevel, "", logging.DebugLevel, 0, 
 // FileParserPDF implements the FileParser interface for PDF files
 type FileParserPDF struct{}
 
-// Ensure FileParserPDF implements FileParser interface
-var _ FileParser = (*FileParserPDF)(nil)
-
 // NewPDFParser creates a new instance of FileParserPDF
 func NewPDFParser() *FileParserPDF {
 	return &FileParserPDF{}
 }
 
 // Parse implements the FileParser interface for PDF files
-func (p *FileParserPDF) Parse(ctx context.Context, reader io.Reader, doc *document.Document) errorx.Error {
-	pdfLogger.Debug("Parsing PDF content")
+func (p *FileParserPDF) Parse(ctx context.Context, path string, doc *document.Document) errorx.Error {
+	pdfLogger.Debug("Parsing PDF file: %s", path)
 
-	// Convert reader to ReaderAt if needed
-	readerAt, size, err := p.ensureReaderAt(reader)
-	if err != nil {
-		return errorx.NewErrBadRequest("failed to prepare PDF reader: %w", err)
+	// Validate file existence
+	if errx := p.validateFile(path); errx != nil {
+		return errx
 	}
 
-	// Open PDF from reader
-	r, err := pdf.NewReader(readerAt, size)
+	// Open PDF file
+	f, r, err := pdf.Open(path)
 	if err != nil {
-		return errorx.NewErrBadRequest("failed to open PDF: %w", err)
+		return errorx.NewErrBadRequest("failed to open PDF file: %w", err)
 	}
+	defer f.Close()
 
 	// Set basic document properties
 	doc.DocumentType = "pdf"
 	doc.CustomMeta = make(map[string]interface{})
+
 	doc.ParserName = "embedded~ledongthuc-pdf"
 	doc.MimeType = "application/pdf"
 
@@ -51,8 +48,8 @@ func (p *FileParserPDF) Parse(ctx context.Context, reader io.Reader, doc *docume
 	p.extractStyledTextMetadata(r, doc)
 
 	totalPages := r.NumPage()
-	pdfLogger.Debug("Successfully parsed PDF content (pages: %d, content size: %d)",
-		totalPages, doc.ContentSize)
+	pdfLogger.Debug("Successfully parsed PDF file: %s (pages: %d, content size: %d)",
+		path, totalPages, doc.ContentSize)
 
 	doc.ContentSize = 0
 	for _, pageText := range doc.PageTextContent {
@@ -62,54 +59,12 @@ func (p *FileParserPDF) Parse(ctx context.Context, reader io.Reader, doc *docume
 	return nil
 }
 
-// ensureReaderAt converts an io.Reader to io.ReaderAt if needed
-func (p *FileParserPDF) ensureReaderAt(reader io.Reader) (io.ReaderAt, int64, error) {
-	// If it's already a ReaderAt, use it directly
-	if readerAt, ok := reader.(io.ReaderAt); ok {
-		// Try to get size if it's also a Seeker
-		if seeker, ok := reader.(io.Seeker); ok {
-			size, err := seeker.Seek(0, io.SeekEnd)
-			if err != nil {
-				return nil, 0, err
-			}
-			_, err = seeker.Seek(0, io.SeekStart)
-			if err != nil {
-				return nil, 0, err
-			}
-			return readerAt, size, nil
-		}
-		// If we can't determine size, we'll need to read all content anyway
+// validateFile checks if the file exists
+func (p *FileParserPDF) validateFile(path string) errorx.Error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return errorx.NewErrBadRequest("file does not exist")
 	}
-
-	// Otherwise, read all content into memory and create a ReaderAt
-	content, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return &readerAt{content: content}, int64(len(content)), nil
-}
-
-// readerAt implements io.ReaderAt for in-memory content
-type readerAt struct {
-	content []byte
-}
-
-func (ra *readerAt) ReadAt(p []byte, off int64) (n int, err error) {
-	if off < 0 {
-		return 0, errors.New("negative offset")
-	}
-
-	if off >= int64(len(ra.content)) {
-		return 0, io.EOF
-	}
-
-	n = copy(p, ra.content[off:])
-	if n < len(p) {
-		err = io.EOF
-	}
-
-	return n, err
+	return nil
 }
 
 // extractStyledTextMetadata extracts font and styling information

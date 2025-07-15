@@ -236,7 +236,7 @@ The worker must handle the `ctx.Done()` channel to detect when the job is being 
 The worker must return `nil` in case of successful job completion, or an error in case of failure or `ctx.Done()` channel is closed. Additionally, the worker can report progress calling `job.SetProgress()` method or update the job result using `job.SetResult()` method.
 
 ```go
-func MyWorkerExecutionCallback(ctx context.Context, job *job.JobObj, progressCh chan<- float32) errorx.Error {
+func MyWorkerExecutionCallback(ctx context.Context, job *job.JobObj) errorx.Error {
     // Get the parameters as the correct type
     params, ok := job.GetParamsPtr().(*MyJobParams)
     if !ok {
@@ -345,7 +345,7 @@ type BatchProcessorSnapshot struct {
     Errors         []string `json:"errors"`
 }
 
-func executeBatchProcessorJob(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+func executeBatchProcessorJob(ctx context.Context, job *JobObj) errorx.Error {
     // Get job parameters
     params, ok := job.GetParamsPtr().(*BatchProcessorParams)
     if !ok {
@@ -412,7 +412,10 @@ func executeBatchProcessorJob(ctx context.Context, job *JobObj, progress chan<- 
         snapshot.LastProcessed = item
 
         // Update progress
-        progress <- float32(i+1) / float32(totalItems) * 100.0
+        err = job.SetProgress(ctx, float32(i+1)/float32(totalItems)*100.0)
+        if err != nil {
+            return err
+        }
 
         // Save snapshot periodically (e.g., after each batch)
         if (i+1) % params.BatchSize == 0 || i == totalItems-1 {

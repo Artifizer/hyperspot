@@ -36,7 +36,7 @@ type LLMServiceModelJobParams struct {
 }
 
 // LLMModelJobWorkerExecutor performs work for LLM model jobs.
-func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj) errorx.Error {
 	jobParamsPtr := job.GetParamsPtr()
 	if jobParamsPtr == nil {
 		return errorx.NewErrInternalServerError("internal error, '%s' job does't have parameters set", job.GetType())
@@ -52,6 +52,18 @@ func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj, progress ch
 	if job.GetTypePtr() == nil {
 		return errorx.NewErrInternalServerError("internal error, '%s' job does't have type set", job.GetType())
 	}
+
+	progress := make(chan float32)
+	defer close(progress)
+
+	// Propagate progress updates.
+	go func() {
+		for p := range progress {
+			if err := job.SetProgress(ctx, p); err != nil {
+				job.LogError("Failed to set progress: %v", err)
+			}
+		}
+	}()
 
 	switch job.GetTypePtr().Name {
 	case MODEL_JOB_TYPE_LOAD:
@@ -80,7 +92,7 @@ func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj, progress ch
 }
 
 // LLMModelJobWorker performs work for LLM model jobs.
-func LLMServiceModelJobWorkerExecutor(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+func LLMServiceModelJobWorkerExecutor(ctx context.Context, job *job.JobObj) errorx.Error {
 	jobParamsPtr := job.GetParamsPtr()
 	if jobParamsPtr == nil {
 		return errorx.NewErrInternalServerError("internal error, '%s' job does't have parameters set", job.GetType())
@@ -105,6 +117,16 @@ func LLMServiceModelJobWorkerExecutor(ctx context.Context, job *job.JobObj, prog
 	if err != nil {
 		return errorx.NewErrBadRequest("service '%s' not found: %s", serviceName, err.Error())
 	}
+
+	progress := make(chan float32)
+	defer close(progress)
+	go func() {
+		for p := range progress {
+			if err := job.SetProgress(ctx, p); err != nil {
+				job.LogError("Failed to set progress: %v", err)
+			}
+		}
+	}()
 
 	switch job.GetTypePtr().Name {
 	case MODEL_JOB_TYPE_IMPORT:

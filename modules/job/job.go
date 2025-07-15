@@ -194,7 +194,6 @@ func (j *JobObj) GetUserID() uuid.UUID {
 	return j.priv.UserID
 }
 
-
 // GetType returns the string identifier for this job's type.
 //
 // This method provides access to the immutable job type string that identifies
@@ -490,6 +489,11 @@ func (j *JobObj) LoadWorkerSnapshot() (any, errorx.Error) {
 
 	if err := j.dbGetFields(&j.priv.WorkerSnapshot); err != nil {
 		return nil, err
+	}
+
+	// If the snapshot field is empty, return nil
+	if j.priv.WorkerSnapshot == "" {
+		return nil, nil
 	}
 
 	var snapshot any
@@ -1101,9 +1105,9 @@ type JobWorkerParamsValidationCallback func(ctx context.Context, job *JobObj) er
 // It run asynchronously in a dedicated go-routine, if error is returned then
 // the job will be marked as failed. Otherwise it will be marked as completed successfully.
 // This callback is called when the job is first started and again after resume.
-// The progress channel is used to report progress updates to the job executor.
-// On resume, the worker is responsible for setting the job progress to the last reported value.
-type JobWorkerExecutionCallback func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error
+// On resume, the worker is responsible for worker state snasphot loading and
+// setting the job progress to the last proper value.
+type JobWorkerExecutionCallback func(ctx context.Context, job *JobObj) errorx.Error
 
 type JobTypeParams struct {
 	Group                          *JobGroup

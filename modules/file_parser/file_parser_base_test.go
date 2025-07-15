@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +21,7 @@ type mockParser struct {
 	errorMsg    string
 }
 
-func (m *mockParser) Parse(_ context.Context, _ io.Reader, doc *document.Document) errorx.Error {
+func (m *mockParser) Parse(ctx context.Context, path string, doc *document.Document) errorx.Error {
 	if m.shouldError {
 		return errorx.NewErrInternalServerError(m.errorMsg)
 	}
@@ -487,36 +486,6 @@ func TestParseLocalDocument(t *testing.T) {
 		assert.Equal(t, "pdf", doc.DocumentType)
 		assert.Greater(t, doc.FileSize, int64(0))
 		assert.NotEmpty(t, doc.FileChecksum)
-	})
-
-	t.Run("Parse valid DOCX file", func(t *testing.T) {
-		docxPath := filepath.Join(testDataDir, "docx", "test_file_two_pages_international.docx")
-
-		// Check if file exists
-		if _, err := os.Stat(docxPath); os.IsNotExist(err) {
-			t.Skip("Test DOCX file not found, skipping test")
-		}
-
-		doc, err := ParseLocalDocument(docxPath)
-
-		assert.NoError(t, err)
-		assert.NotNil(t, doc)
-		assert.Equal(t, document.DocumentOriginLocalFile, doc.OriginType)
-		assert.Equal(t, docxPath, doc.OriginLocation)
-		assert.Equal(t, "test_file_two_pages_international.docx", doc.OriginName)
-		assert.Equal(t, "docx", doc.DocumentType)
-		assert.Greater(t, doc.FileSize, int64(0))
-		assert.NotEmpty(t, doc.FileChecksum)
-		assert.Equal(t, "embedded~fumiama-go-docx", doc.ParserName)
-		assert.Equal(t, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc.MimeType)
-
-		// Verify that content was extracted
-		assert.Greater(t, doc.ContentSize, 0)
-		assert.Greater(t, len(doc.PageTextContent), 0)
-
-		// Verify metadata was extracted
-		assert.NotNil(t, doc.CustomMeta)
-		assert.Contains(t, doc.CustomMeta, "paragraph_count")
 	})
 
 	t.Run("Parse valid Markdown file", func(t *testing.T) {

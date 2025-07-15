@@ -46,7 +46,7 @@ func getTestJobTypeForAPI() *JobType {
 				Description:                    "Test job type",
 				Params:                         &testJobParams{},
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-				WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+				WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 				WorkerStateUpdateCallback:      nil,
 				Timeout:                        time.Hour * 3,
 				RetryDelay:                     time.Second * 30,
@@ -430,7 +430,7 @@ func TestJobAPI_APIGetJobType(t *testing.T) {
 			Description:                    "Update a model",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			Timeout:                        time.Hour * 3,
 			RetryDelay:                     time.Second * 30,
 			MaxRetries:                     5,
@@ -476,7 +476,7 @@ func TestJobAPI_JobTypeToAPIResponse(t *testing.T) {
 		MaxRetries:              1,
 		RetryDelaySec:           2,
 		WorkerInitCallback:      func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 	}
 	japi := &JobAPI{}
 	resp := japi.JobTypeToAPIResponse(jt)

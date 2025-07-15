@@ -36,7 +36,7 @@ func getFastJobType() *JobType {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// simulate work by sleeping a short duration
 					time.Sleep(50 * time.Millisecond)
 					// Mark job as complete within the worker
@@ -70,7 +70,7 @@ func getBlockedJobType() *JobType {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// Block indefinitely until the context is canceled.
 					<-ctx.Done()
 					return errorx.NewErrCanceled("canceled by test")
@@ -103,7 +103,7 @@ func getUnblockedJobType() *JobType {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// Block indefinitely until the context is canceled.
 					<-ctx.Done()
 					return errorx.NewErrCanceled("canceled by test")
@@ -392,7 +392,7 @@ func TestJobExecutor_Timeout_Override(t *testing.T) {
 				return nil
 			},
 			// Worker callback - will run longer than the timeout
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Block until context is done or timeout occurs
 				select {
 				case <-ctx.Done():
@@ -469,9 +469,12 @@ func TestJobExecutor_StateUpdateCallback(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Send a progress update to trigger the StateUpdateCallback
-				progress <- 0.5
+				err := job.SetProgress(ctx, 0.5)
+				if err != nil {
+					return err
+				}
 				time.Sleep(100 * time.Millisecond)
 				return nil
 			},
@@ -772,7 +775,7 @@ func TestJobExecutor_SuspendThenCancelJob(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Block until context is canceled
 				<-ctx.Done()
 				return errorx.NewErrCanceled("")
@@ -851,7 +854,7 @@ func TestJobExecutor_SuspendThenDeleteJob(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Block until context is canceled
 				<-ctx.Done()
 				return errorx.NewErrCanceled("")
@@ -929,7 +932,7 @@ func TestJobExecutor_ResumeRunningJob(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Block until context is canceled
 				<-ctx.Done()
 				return errorx.NewErrCanceled("")
@@ -1006,7 +1009,7 @@ func TestJobExecutor_SetLockedBy_CircularDependency(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Run for a long time or until canceled
 				select {
 				case <-ctx.Done():
@@ -1100,9 +1103,12 @@ func TestJobExecutor_SetTimedOut(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Send some progress
-				progress <- 25
+				err := job.SetProgress(ctx, 25)
+				if err != nil {
+					return err
+				}
 
 				// Run longer than the timeout to trigger timeout
 				select {
@@ -1162,14 +1168,17 @@ func TestJobExecutor_Skip(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Check if job was skipped
 				if job.GetStatus() == JobStatusSkipped {
 					return errorx.NewErrCanceled("job was skipped")
 				}
 
 				// Send some progress
-				progress <- 25
+				err := job.SetProgress(ctx, 25)
+				if err != nil {
+					return err
+				}
 
 				// Run for a while to allow skipping
 				select {
@@ -1275,11 +1284,14 @@ func TestJobExecutor_Schedule(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Signal that the job was executed
 				executedChan <- true
 				// Set progress to 100%
-				progress <- 100
+				err := job.SetProgress(ctx, 100)
+				if err != nil {
+					return err
+				}
 				// Set a result
 				return job.SetResult(ctx, testResult{Status: "success"})
 			},
@@ -1341,9 +1353,12 @@ func TestJobExecutor_Cancel(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Send initial progress
-				progress <- 10
+				err := job.SetProgress(ctx, 10)
+				if err != nil {
+					return err
+				}
 
 				// Wait for cancellation or timeout
 				select {
@@ -1417,9 +1432,12 @@ func TestJobExecutor_Timeout(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Send initial progress
-				progress <- 10
+				err := job.SetProgress(ctx, 10)
+				if err != nil {
+					return err
+				}
 
 				// Sleep longer than the timeout duration
 				select {
@@ -1570,7 +1588,7 @@ func TestJobExecutor_LockCancelUnlock(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// This job will run for a long time unless canceled
 				select {
 				case <-ctx.Done():
@@ -1685,7 +1703,7 @@ func TestJobExecutor_CancelCompletedOrFailedJob(t *testing.T) {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// Complete immediately
 					return nil
 				},
@@ -1750,7 +1768,7 @@ func TestJobExecutor_CancelCompletedOrFailedJob(t *testing.T) {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// Fail immediately
 					return errorx.NewErrCanceled("intentional failure for test")
 				},
@@ -1900,7 +1918,7 @@ func TestJobExecutor_FailJob(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Always fail with the dummy error
 				return errorx.NewErrInternalServerError(dummyErr.Error())
 			},
@@ -1966,7 +1984,7 @@ func TestJobExecutor_RetryJob(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Use atomic increment to track attempts safely
 				currentAttempt := atomic.AddInt32(&attemptCount, 1)
 				job.LogTrace("currentAttempt: %d", currentAttempt)
@@ -1976,7 +1994,10 @@ func TestJobExecutor_RetryJob(t *testing.T) {
 					return errorx.NewErrInternalServerError(dummyErr.Error())
 				}
 				// Succeed on subsequent attempts
-				progress <- 100
+				err := job.SetProgress(ctx, 100)
+				if err != nil {
+					return err
+				}
 				return nil
 			},
 			WorkerStateUpdateCallback: nil,
@@ -2061,7 +2082,7 @@ func TestJobExecutor_LockAndUnlock(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Run for a long time or until canceled
 				select {
 				case <-ctx.Done():
@@ -2188,9 +2209,12 @@ func TestJobExecutor_CancelingAndCancel(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Send some progress
-				progress <- 25
+				err := job.SetProgress(ctx, 25)
+				if err != nil {
+					return err
+				}
 
 				// Run for a long time or until canceled
 				select {
@@ -2292,7 +2316,7 @@ func TestJobExecutor_SuspendWaitingJob(t *testing.T) {
 		Description:                    "Job for suspending in waiting state",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 			select {
 			case <-ctx.Done():
 				return errorx.NewErrCanceled("job canceled")
@@ -2370,7 +2394,7 @@ func TestJobExecutor_SuspendingToSuspended(t *testing.T) {
 		Description:                    "Job for suspending to suspended",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 			// Wait for context cancel (simulate suspending)
 			select {
 			case <-ctx.Done():
@@ -2427,7 +2451,7 @@ func TestJobExecutor_ResumeSuspendedJob(t *testing.T) {
 		Description:                    "Job for resume suspended",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 			// Wait for context cancel (simulate suspending)
 			select {
 			case <-ctx.Done():
@@ -2498,12 +2522,15 @@ func TestJobExecutor_RetryingToRunning(t *testing.T) {
 		Description:                    "Job for retrying to running",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+		WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 			attempt++
 			if attempt == 1 {
 				return errorx.NewErrInternalServerError("fail first")
 			}
-			progress <- 100
+			err := job.SetProgress(ctx, 100)
+			if err != nil {
+				return err
+			}
 			return nil
 		},
 		WorkerIsSuspendable: false,
@@ -2547,7 +2574,7 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 			Timeout:             10 * time.Second,
 			RetryDelay:          1 * time.Second,
 			MaxRetries:          0,
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Just return nil for successful completion
 				return nil
 			},
@@ -2590,7 +2617,7 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 			Timeout:             10 * time.Second,
 			RetryDelay:          1 * time.Second,
 			MaxRetries:          0,
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return errorx.NewErrInternalServerError("intentional failure for test")
 			},
 		})
@@ -2632,7 +2659,7 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 			Timeout:             1 * time.Second, // Very short timeout
 			RetryDelay:          1 * time.Second,
 			MaxRetries:          0,
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Sleep longer than the timeout
 				select {
 				case <-ctx.Done():
@@ -2680,7 +2707,7 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 			Timeout:             10 * time.Second,
 			RetryDelay:          1 * time.Second,
 			MaxRetries:          0,
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Skip the job
 				err := JESetSkipped(ctx, job.GetJobID(), "skipped for test")
 				if err != nil {
@@ -2727,7 +2754,7 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 			Timeout:             10 * time.Second,
 			RetryDelay:          1 * time.Second,
 			MaxRetries:          0,
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Long-running job that can be canceled
 				for i := 0; i < 10; i++ {
 					select {
@@ -2793,7 +2820,7 @@ func TestJobExecutor_SaveWorkerSnapshot(t *testing.T) {
 		Description:                    "Job for testing worker snapshots",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 		WorkerIsSuspendable:            true,
 	})
 
@@ -2865,7 +2892,10 @@ func TestJobExecutor_SaveWorkerSnapshot(t *testing.T) {
 		// Verify the snapshot was saved
 		loadedSnapshot, errx := job.LoadWorkerSnapshot()
 		assert.NoError(t, errx)
-		assert.Equal(t, snapshot, loadedSnapshot)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(snapshot)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
 	})
 
 	// Test 4: Save a map snapshot
@@ -2887,7 +2917,10 @@ func TestJobExecutor_SaveWorkerSnapshot(t *testing.T) {
 		// Verify the snapshot was saved
 		loadedSnapshot, errx := job.LoadWorkerSnapshot()
 		assert.NoError(t, errx)
-		assert.Equal(t, snapshot, loadedSnapshot)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(snapshot)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
 	})
 
 	// Test 5: Save nil snapshot
@@ -2977,7 +3010,7 @@ func TestJobExecutor_LoadWorkerSnapshot(t *testing.T) {
 		Description:                    "Job for testing worker snapshot loading",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 		WorkerIsSuspendable:            true,
 	})
 
@@ -3011,7 +3044,10 @@ func TestJobExecutor_LoadWorkerSnapshot(t *testing.T) {
 		// Load snapshot
 		loadedSnapshot, errx := job.LoadWorkerSnapshot()
 		assert.NoError(t, errx)
-		assert.Equal(t, originalSnapshot, loadedSnapshot)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(originalSnapshot)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
 	})
 
 	// Test 3: Load snapshot multiple times
@@ -3067,7 +3103,10 @@ func TestJobExecutor_LoadWorkerSnapshot(t *testing.T) {
 		// Load snapshot
 		loadedSnapshot, errx := job.LoadWorkerSnapshot()
 		assert.NoError(t, errx)
-		assert.Equal(t, originalSnapshot, loadedSnapshot)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(originalSnapshot)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
 	})
 
 	// Test 5: Load snapshot after job status changes
@@ -3108,7 +3147,7 @@ func TestJobExecutor_WorkerSnapshotConcurrency(t *testing.T) {
 		Description:                    "Job for testing concurrent worker snapshots",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 		WorkerIsSuspendable:            true,
 	})
 
@@ -3215,7 +3254,7 @@ func TestJobExecutor_WorkerSnapshotEdgeCases(t *testing.T) {
 		Description:                    "Job for testing worker snapshot edge cases",
 		Params:                         &struct{}{},
 		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 		WorkerIsSuspendable:            true,
 	})
 

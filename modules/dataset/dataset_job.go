@@ -14,7 +14,7 @@ import (
 	"github.com/hypernetix/hyperspot/modules/job"
 )
 
-func downloadDataset(ctx context.Context, j *job.JobObj, params *DatasetJobParams, _ chan<- float32) error {
+func downloadDataset(ctx context.Context, j *job.JobObj, params *DatasetJobParams) error {
 	dataset := params.DatasetPtr
 
 	for {
@@ -99,7 +99,7 @@ func downloadDataset(ctx context.Context, j *job.JobObj, params *DatasetJobParam
 	return nil
 }
 
-func deleteDataset(ctx context.Context, job *job.JobObj, _ chan<- float32) errorx.Error {
+func deleteDataset(ctx context.Context, job *job.JobObj) errorx.Error {
 	paramsPtr := job.GetParamsPtr()
 	if paramsPtr == nil {
 		return errorx.NewErrInternalServerError("job parameters are nil")
@@ -137,7 +137,7 @@ type DatasetJobParams struct {
 }
 
 // LLMModelJobWorker performs work for LLM model jobs.
-func DatasetDownloadJobWorkerExecutor(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+func DatasetDownloadJobWorkerExecutor(ctx context.Context, job *job.JobObj) errorx.Error {
 	paramsPtr := job.GetParamsPtr()
 	if paramsPtr == nil {
 		return errorx.NewErrInternalServerError("job parameters are nil")
@@ -161,7 +161,7 @@ func DatasetDownloadJobWorkerExecutor(ctx context.Context, job *job.JobObj, prog
 		}
 	}
 
-	err := downloadDataset(ctx, job, params, progress)
+	err := downloadDataset(ctx, job, params)
 
 	if err != nil {
 		return errorx.NewErrInternalServerError("failed to execute dataset job: %s", err.Error())
@@ -170,8 +170,8 @@ func DatasetDownloadJobWorkerExecutor(ctx context.Context, job *job.JobObj, prog
 	return nil
 }
 
-func DatasetDeleteJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
-	err := deleteDataset(ctx, job, progress)
+func DatasetDeleteJobWorker(ctx context.Context, job *job.JobObj) errorx.Error {
+	err := deleteDataset(ctx, job)
 	if err != nil {
 		return errorx.NewErrInternalServerError("failed to delete dataset: %s", err.Error())
 	}
@@ -179,13 +179,13 @@ func DatasetDeleteJobWorker(ctx context.Context, job *job.JobObj, progress chan<
 	return nil
 }
 
-func DatasetUpdateJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
-	err := deleteDataset(ctx, job, progress)
+func DatasetUpdateJobWorker(ctx context.Context, job *job.JobObj) errorx.Error {
+	err := deleteDataset(ctx, job)
 	if err != nil {
 		return errorx.NewErrInternalServerError("failed to delete dataset: %s", err.Error())
 	}
 
-	err = DatasetDownloadJobWorkerExecutor(ctx, job, progress)
+	err = DatasetDownloadJobWorkerExecutor(ctx, job)
 	if err != nil {
 		return errorx.NewErrInternalServerError("failed to download dataset: %s", err.Error())
 	}

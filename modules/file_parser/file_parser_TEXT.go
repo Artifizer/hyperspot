@@ -2,7 +2,7 @@ package file_parser
 
 import (
 	"context"
-	"io"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -16,25 +16,28 @@ var textLogger = logging.NewLogger(logging.InfoLevel, "", logging.DebugLevel, 0,
 // FileParserText implements the FileParser interface for text files
 type FileParserText struct{}
 
-// Ensure FileParserText implements FileParser interface
-var _ FileParser = (*FileParserText)(nil)
-
 // NewTextParser creates a new instance of FileParserText
 func NewTextParser() *FileParserText {
 	return &FileParserText{}
 }
 
 // Parse implements the FileParser interface for text files
-func (p *FileParserText) Parse(ctx context.Context, reader io.Reader, doc *document.Document) errorx.Error {
-	textLogger.Debug("Parsing text content")
+func (p *FileParserText) Parse(ctx context.Context, path string, doc *document.Document) errorx.Error {
+	textLogger.Debug("Parsing text file: %s", path)
 
-	// Read content from reader
-	content, errx := p.readContent(reader)
+	// Validate file existence
+	if errx := p.validateFile(path); errx != nil {
+		return errx
+	}
+
+	// Read file content
+	content, errx := p.readFileContent(path)
 	if errx != nil {
 		return errx
 	}
 
 	// Set basic document properties
+	doc.DocumentType = getFileExtension(path)
 	doc.CustomMeta = make(map[string]interface{})
 	doc.ParserName = "embedded~text"
 	doc.MimeType = "text/plain"
@@ -43,21 +46,30 @@ func (p *FileParserText) Parse(ctx context.Context, reader io.Reader, doc *docum
 	p.extractPageContent(content, doc)
 	p.extractTextMetadata(content, doc)
 
-	textLogger.Debug("Successfully parsed text content (content size: %d)", doc.ContentSize)
+	textLogger.Debug("Successfully parsed text file: %s (content size: %d)",
+		path, doc.ContentSize)
 
 	return nil
 }
 
-// readContent reads the entire content from reader
-func (p *FileParserText) readContent(reader io.Reader) (string, errorx.Error) {
-	content, err := io.ReadAll(reader)
+// validateFile checks if the file exists
+func (p *FileParserText) validateFile(path string) errorx.Error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return errorx.NewErrBadRequest("file does not exist")
+	}
+	return nil
+}
+
+// readFileContent reads the entire file content
+func (p *FileParserText) readFileContent(path string) (string, errorx.Error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", errorx.NewErrInternalServerError("failed to read text content: %v", err)
+		return "", errorx.NewErrInternalServerError("failed to read text file: %v", err)
 	}
 
 	// Check if content is valid UTF-8, if not try to handle it gracefully
 	if !utf8.Valid(content) {
-		textLogger.Warn("Content contains non-UTF-8, attempting to clean it")
+		textLogger.Warn("File contains non-UTF-8 content, attempting to clean it")
 		// Convert invalid UTF-8 sequences to replacement characters
 		content = []byte(strings.ToValidUTF8(string(content), ""))
 	}

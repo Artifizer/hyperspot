@@ -21,7 +21,7 @@ type DockerImageDownloadJobParams struct {
 }
 
 // DockerImageDownloadJobWorker performs work for Docker image download jobs
-func DockerImageDownloadJobWorker(ctx context.Context, job *job.JobObj, progress chan<- float32) errorx.Error {
+func DockerImageDownloadJobWorker(ctx context.Context, job *job.JobObj) errorx.Error {
 	paramsPtr := job.GetParamsPtr()
 	if paramsPtr == nil {
 		return errorx.NewErrInternalServerError("job parameters are nil")
@@ -70,7 +70,9 @@ func DockerImageDownloadJobWorker(ctx context.Context, job *job.JobObj, progress
 			currentProgress := float32(event.ProgressDetail.Current) / float32(event.ProgressDetail.Total) * 95
 			// Only send progress updates when there's meaningful change
 			if currentProgress-lastProgress >= 1.0 {
-				progress <- currentProgress
+				if err := job.SetProgress(ctx, currentProgress); err != nil {
+					return errorx.NewErrInternalServerError("failed to set progress: %w", err)
+				}
 				lastProgress = currentProgress
 			}
 		}

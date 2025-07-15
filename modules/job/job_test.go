@@ -44,10 +44,16 @@ func getDummyJobType() *JobType {
 				WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					return nil
 				},
-				WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+				WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 					// Simulate some progress and then complete.
-					progress <- 50
-					progress <- 100
+					err := job.SetProgress(ctx, 50)
+					if err != nil {
+						return err
+					}
+					err = job.SetProgress(ctx, 100)
+					if err != nil {
+						return err
+					}
 					return nil
 				},
 				WorkerStateUpdateCallback: nil,
@@ -182,7 +188,7 @@ func TestJobType_Validation(t *testing.T) {
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				return nil
 			},
-			WorkerExecutionCallback: func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error {
+			WorkerExecutionCallback: func(ctx context.Context, job *JobObj) errorx.Error {
 				// Do nothing
 				return nil
 			},
@@ -303,7 +309,7 @@ func TestJobType_GetJobTypes(t *testing.T) {
 			Description:                    "First job type",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			WorkerStateUpdateCallback:      nil,
 			WorkerIsSuspendable:            false,
 			Timeout:                        60 * time.Second,
@@ -324,7 +330,7 @@ func TestJobType_GetJobTypes(t *testing.T) {
 			Description:                    "Second job type",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			Timeout:                        60 * time.Second,
 			RetryDelay:                     0,
 			MaxRetries:                     0,
@@ -457,7 +463,7 @@ func TestJobConfig_RegisterJobType(t *testing.T) {
 			Description:                    "Test group for config",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			WorkerStateUpdateCallback:      nil,
 			WorkerIsSuspendable:            false,
 			Timeout:                        time.Hour,   // timeoutSec
@@ -500,7 +506,7 @@ func TestJobConfig_GetJobType(t *testing.T) {
 			Description:                    "Job type for get test",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			Timeout:                        time.Hour,
 			RetryDelay:                     time.Second,
 			MaxRetries:                     0,
@@ -551,7 +557,7 @@ func TestJobConfig_DuplicateTypeRegistration(t *testing.T) {
 			Description:                    "First registration",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			WorkerStateUpdateCallback:      nil,
 			WorkerIsSuspendable:            false,
 			Timeout:                        time.Hour,
@@ -572,7 +578,7 @@ func TestJobConfig_DuplicateTypeRegistration(t *testing.T) {
 			Description:                    "Second registration attempt",
 			Params:                         &struct{}{},
 			WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
-			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+			WorkerExecutionCallback:        func(ctx context.Context, job *JobObj) errorx.Error { return nil },
 			WorkerStateUpdateCallback:      nil,
 			WorkerIsSuspendable:            false,
 			Timeout:                        time.Minute, // different timeout

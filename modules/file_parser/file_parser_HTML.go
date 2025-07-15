@@ -2,7 +2,7 @@ package file_parser
 
 import (
 	"context"
-	"io"
+	"os"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -16,22 +16,31 @@ var htmlLogger = logging.NewLogger(logging.InfoLevel, "", logging.DebugLevel, 0,
 // FileParserHTML implements the FileParser interface for HTML files
 type FileParserHTML struct{}
 
-// Ensure FileParserHTML implements FileParser interface
-var _ FileParser = (*FileParserHTML)(nil)
-
 // NewHTMLParser creates a new instance of FileParserHTML
 func NewHTMLParser() *FileParserHTML {
 	return &FileParserHTML{}
 }
 
 // Parse implements the FileParser interface for HTML files
-func (p *FileParserHTML) Parse(ctx context.Context, reader io.Reader, doc *document.Document) errorx.Error {
-	htmlLogger.Debug("Parsing HTML content")
+func (p *FileParserHTML) Parse(ctx context.Context, path string, doc *document.Document) errorx.Error {
+	htmlLogger.Debug("Parsing HTML file: %s", path)
+
+	// Validate file existence
+	if errx := p.validateFile(path); errx != nil {
+		return errx
+	}
+
+	// Open HTML file
+	file, err := os.Open(path)
+	if err != nil {
+		return errorx.NewErrBadRequest("failed to open HTML file: %w", err)
+	}
+	defer file.Close()
 
 	// Parse HTML with goquery
-	htmlDoc, err := goquery.NewDocumentFromReader(reader)
+	htmlDoc, err := goquery.NewDocumentFromReader(file)
 	if err != nil {
-		return errorx.NewErrBadRequest("failed to parse HTML content: %w", err)
+		return errorx.NewErrBadRequest("failed to parse HTML file: %w", err)
 	}
 
 	// Set basic document properties
@@ -44,8 +53,17 @@ func (p *FileParserHTML) Parse(ctx context.Context, reader io.Reader, doc *docum
 	p.extractPageContent(htmlDoc, doc)
 	p.extractHTMLMetadata(htmlDoc, doc)
 
-	htmlLogger.Debug("Successfully parsed HTML content (content size: %d)", doc.ContentSize)
+	htmlLogger.Debug("Successfully parsed HTML file: %s (content size: %d)",
+		path, doc.ContentSize)
 
+	return nil
+}
+
+// validateFile checks if the file exists
+func (p *FileParserHTML) validateFile(path string) errorx.Error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return errorx.NewErrBadRequest("file does not exist")
+	}
 	return nil
 }
 
