@@ -296,6 +296,13 @@ func Fatal(msg string, args ...interface{}) {
 	MainLogger.Log(FatalLevel, msg, args...)
 }
 
+func (l *Logger) GetMinLogLevel() Level {
+	if l.ConsoleLevel < l.FileLevel {
+		return l.ConsoleLevel
+	}
+	return l.FileLevel
+}
+
 // Add this method to the Logger struct
 func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 	if l == nil {
