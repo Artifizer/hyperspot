@@ -132,6 +132,8 @@ type Job struct {
 	Params    string      `json:"params,omitempty"` // job parameters as a JSON string
 	ParamsPtr interface{} `json:"-" gorm:"-"`       // job parameters as a struct
 
+	WorkerSnapshot string `json:"worker_snapshot"` // custom persistable worker snapshot
+
 	//	Result interface{} `json:"result,omitempty" gorm:"type:json;serializer:json" readOnly:"true"`
 	//	Params interface{} `json:"params,omitempty" gorm:"type:json;serializer:json"`
 }
@@ -149,31 +151,76 @@ type JobObj struct {
 // LLM managers, etc
 //
 
+// GetJobID returns the unique identifier (UUID) for this job.
+//
+// This method provides access to the immutable job identifier that uniquely
+// identifies this job instance across the entire system. The job ID is
+// generated when the job is created and never changes throughout the job's
+// lifecycle. It can be used for job lookup, tracking, and correlation with
+// other system components.
+//
+// Returns:
+//   - uuid.UUID: The unique identifier of the job
 func (j *JobObj) GetJobID() uuid.UUID {
 	// immutable, no need to refresh from DB
 	return j.priv.JobID
 }
 
+// GetTenantID returns the tenant identifier associated with this job.
+//
+// This method provides access to the immutable tenant ID that identifies
+// which tenant owns this job. The tenant ID is used for multi-tenancy
+// isolation and access control. Jobs are always scoped to a specific tenant
+// and can only be accessed by users within that tenant.
+//
+// Returns:
+//   - uuid.UUID: The tenant identifier that owns this job
 func (j *JobObj) GetTenantID() uuid.UUID {
 	// immutable, no need to refresh from DB
 	return j.priv.TenantID
 }
 
+// GetUserID returns the identifier of the user who owns this job.
+//
+// This method provides access to the immutable user ID that identifies
+// which user created or owns this job. The user ID is used for access control
+// and attribution. It allows the system to track which user initiated a
+// particular job and may be used for permissions checking.
+//
+// Returns:
+//   - uuid.UUID: The user identifier that owns this job
 func (j *JobObj) GetUserID() uuid.UUID {
 	// immutable, no need to refresh from DB
 	return j.priv.UserID
 }
 
-func (j *JobObj) GetIdempotencyKey() uuid.UUID {
-	// immutable, no need to refresh from DB
-	return j.priv.IdempotencyKey
-}
 
+// GetType returns the string identifier for this job's type.
+//
+// This method provides access to the immutable job type string that identifies
+// the kind of job this is. The job type determines the behavior, parameters,
+// and execution logic for the job. It is a string in the format "group:name"
+// where group is the job group and name is the specific job type within that group.
+//
+// Returns:
+//   - string: The job type identifier string
 func (j *JobObj) GetType() string {
 	// immutable, no need to refresh from DB
 	return j.priv.Type
 }
 
+// GetTypePtr returns a pointer to the JobType struct associated with this job.
+//
+// This method provides access to the complete JobType configuration for this job,
+// including timeout settings, retry policies, parameter schemas, and worker callbacks.
+// The JobType contains all the metadata and configuration needed to execute the job.
+// This is a static immutable property and does not require database refresh.
+//
+// Returns:
+//   - *JobType: Pointer to the JobType struct for this job
+//
+// Panics:
+//   - If the job type is not properly initialized (logs an error)
 func (j *JobObj) GetTypePtr() *JobType {
 	// immutable, no need to refresh from DB
 	if j.priv.TypePtr == nil {
@@ -182,11 +229,37 @@ func (j *JobObj) GetTypePtr() *JobType {
 	return j.priv.TypePtr
 }
 
+// GetParamsPtr returns a pointer to the job parameters struct.
+//
+// This method provides access to the typed parameters for this job. The returned
+// interface{} should be type-asserted to the specific parameter type defined
+// for this job type. The parameters contain all the input data needed for the
+// job execution and are deserialized from the JSON stored in the database.
+//
+// Example usage:
+//
+//	params, ok := job.GetParamsPtr().(*MyJobParams)
+//	if !ok {
+//	    return errorx.NewErrInternalServerError("invalid job parameters type")
+//	}
+//
+// Returns:
+//   - interface{}: Pointer to the job parameters struct, which should be type-asserted
+//     to the specific parameter type for this job
 func (j *JobObj) GetParamsPtr() interface{} {
 	// immutable, no need to refresh from DB
 	return j.priv.ParamsPtr
 }
 
+// GetTimeoutSec returns the configured timeout duration (in seconds) for this job.
+//
+// This method retrieves the current timeout setting for the job, which determines
+// how long the job is allowed to run before it is automatically timed out.
+// The timeout is refreshed from the database on each call to ensure the latest
+// value is used, as it can be modified during job execution.
+//
+// Returns:
+//   - time.Duration: The timeout duration in seconds
 func (j *JobObj) GetTimeoutSec() time.Duration {
 	// mutable & public, always refresh from DB
 	j.mu.Lock()
@@ -196,6 +269,15 @@ func (j *JobObj) GetTimeoutSec() time.Duration {
 	return time.Duration(j.priv.TimeoutSec) * time.Second
 }
 
+// GetStatus returns the current status of the job.
+//
+// This method retrieves the current job status from the database to ensure
+// the most up-to-date value is returned. The status indicates the current
+// state of the job in its lifecycle (e.g., waiting, running, completed, failed).
+// If the job is not found in the database, JobStatusDeleted is returned.
+//
+// Returns:
+//   - JobStatus: The current status of the job
 func (j *JobObj) GetStatus() JobStatus {
 	// mutable & public, always refresh from DB
 	j.mu.Lock()
@@ -217,12 +299,24 @@ func (j *JobObj) GetStatus() JobStatus {
 	}
 
 	if status != dbStatus {
-		panic(fmt.Sprintf("internal error: job status mismatch: %s != %s", status, dbStatus))
+		panic(fmt.Sprintf("internal error: job status mismatch: %s != %s", status, dbStatus)) // FIXME
 	}
 
 	return j.priv.Status
 }
 
+// GetStatusErrorProgressSuccess returns multiple job status properties in a single call.
+//
+// This method provides an efficient way to retrieve several job status-related
+// properties in a single database query. It returns the current status string,
+// any error message associated with the job, the current progress percentage,
+// and a boolean indicating whether the job completed successfully.
+//
+// Returns:
+//   - string: The current job status as a string
+//   - string: Any error message associated with the job (empty if no error)
+//   - float32: The current progress value (0-100)
+//   - bool: Whether the job completed successfully (true if status is "completed")
 func (j *JobObj) GetStatusErrorProgressSuccess() (string, string, float32, bool) {
 	// mutable & public, always refresh from DB
 	j.mu.Lock()
@@ -236,6 +330,15 @@ func (j *JobObj) GetStatusErrorProgressSuccess() (string, string, float32, bool)
 	return string(j.priv.Status), j.priv.Error, j.priv.Progress, success
 }
 
+// GetProgress returns the current progress percentage of the job.
+//
+// This method retrieves the current progress value from the database to ensure
+// the most up-to-date value is returned. The progress is a float between 0 and 100
+// that indicates how far along the job is in its execution. This value is updated
+// by the job worker during execution.
+//
+// Returns:
+//   - float32: The current progress percentage (0-100)
 func (j *JobObj) GetProgress() float32 {
 	// mutable & public, always refresh from DB
 	j.mu.Lock()
@@ -245,28 +348,156 @@ func (j *JobObj) GetProgress() float32 {
 	return j.priv.Progress
 }
 
+// SetResult sets the result data for the job.
+//
+// This method allows the job worker to store the output data or result of the job.
+// The result can be any JSON-serializable data structure and will be stored in the
+// job record and visible in the API. This is typically called when a job completes
+// successfully to provide the output data that can be retrieved by clients.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//   - result: The result data to store (must be JSON-serializable)
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetResult(ctx context.Context, result interface{}) errorx.Error {
 	return JESetResult(ctx, j.GetJobID(), result)
 }
 
+// SetSkipped marks the job as skipped with the provided reason.
+//
+// This method allows the job worker to indicate that the job was intentionally
+// not executed. This is different from failure or cancellation and indicates
+// that the job was determined to be unnecessary or redundant. The provided
+// reason explains why the job was skipped.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//   - reason: A string explaining why the job was skipped
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetSkipped(ctx context.Context, reason string) errorx.Error {
 	return JESetSkipped(ctx, j.GetJobID(), reason)
 }
 
+// SetProgress updates the job's progress percentage.
+//
+// This method allows the job worker to report its progress during execution.
+// The progress value should be between 0 and 100, where 0 indicates the job
+// has just started and 100 indicates it is complete. This information is used
+// for monitoring and displaying job progress to users.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//   - progress: The current progress percentage (0-100)
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetProgress(ctx context.Context, progress float32) errorx.Error {
 	return JESetProgress(ctx, j.GetJobID(), progress)
 }
 
+// SetLockedBy locks the job by another job identified by the provided UUID.
+//
+// This method allows one job to lock another job, creating a dependency relationship.
+// When a job is locked, it cannot be executed until it is unlocked. This is used
+// for implementing job dependencies where one job needs to wait for another job
+// to complete before it can proceed.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//   - lockedBy: The UUID of the job that is locking this job
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetLockedBy(ctx context.Context, lockedBy uuid.UUID) errorx.Error {
 	return JESetLockedBy(ctx, j.GetJobID(), lockedBy)
 }
 
+// SetUnlocked removes any lock on the job, allowing it to be processed.
+//
+// This method releases a lock previously set by SetLockedBy, allowing the job
+// to proceed with execution. This is typically called when a dependency has been
+// resolved, such as when a parent job completes and allows its dependent jobs
+// to start.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetUnlocked(ctx context.Context) errorx.Error {
 	return JESetUnlocked(ctx, j.GetJobID())
 }
 
+// SetRetryPolicy sets the retry policy for the job.
+//
+// This method allows customizing the retry behavior for a job during its execution.
+// It specifies how long to wait between retry attempts, how many times to retry,
+// and the overall timeout for the job. This can be used to override the default
+// retry policy defined in the job type.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//   - retryDelay: The duration to wait between retry attempts
+//   - maxRetries: The maximum number of retry attempts allowed
+//   - timeout: The overall timeout for the job execution
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
 func (j *JobObj) SetRetryPolicy(ctx context.Context, retryDelay time.Duration, maxRetries int, timeout time.Duration) errorx.Error {
 	return jeSetRetryPolicy(ctx, j, retryDelay, maxRetries, timeout)
+}
+
+// SaveWorkerSnapshot persists a custom worker state snapshot to the database.
+//
+// This method allows a job worker to save its current execution state as a JSON-serializable
+// object. This is particularly useful for suspendable jobs that need to save their
+// progress before being suspended and later resumed. The snapshot can contain any
+// data needed to resume the job from where it left off.
+//
+// Parameters:
+//   - snapshot: Any JSON-serializable object representing the worker's current state
+//
+// Returns:
+//   - errorx.Error: An error if serialization or database operation fails, or nil on success
+func (j *JobObj) SaveWorkerSnapshot(snapshot any) errorx.Error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	jsonData, err := json.Marshal(snapshot)
+	if err != nil {
+		return errorx.NewErrInternalServerError("failed to marshal job worker snapshot: %s", err.Error())
+	}
+	j.priv.WorkerSnapshot = string(jsonData)
+	return j.dbSaveFields(&j.priv.WorkerSnapshot)
+}
+
+// LoadWorkerSnapshot retrieves a previously saved worker state snapshot from the database.
+//
+// This method allows a job worker to retrieve its previously saved execution state
+// when resuming a suspended job. The snapshot is deserialized from JSON into a generic
+// interface{} that should be type-asserted by the caller to the expected type.
+//
+// Returns:
+//   - any: The deserialized worker snapshot, which should be type-asserted by the caller
+//   - errorx.Error: An error if deserialization or database operation fails, or nil on success
+func (j *JobObj) LoadWorkerSnapshot() (any, errorx.Error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if err := j.dbGetFields(&j.priv.WorkerSnapshot); err != nil {
+		return nil, err
+	}
+
+	var snapshot any
+	err := json.Unmarshal([]byte(j.priv.WorkerSnapshot), &snapshot)
+	if err != nil {
+		return nil, errorx.NewErrInternalServerError("failed to unmarshal job worker snapshot: %s", err.Error())
+	}
+	return snapshot, nil
 }
 
 //
@@ -313,18 +544,33 @@ func (j *JobObj) getParams() string {
 	return j.priv.Params
 }
 
+func (j *JobObj) getIdempotencyKey() uuid.UUID {
+	// immutable, no need to refresh from DB
+	return j.priv.IdempotencyKey
+}
+
 func (j *JobObj) setStatus(status JobStatus, statusErr string, fields ...interface{}) errorx.Error {
+	var currentStatus JobStatus
+
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	j.LogDebug("setStatus(%s@%p) - status is '%s', stack: %s", j.priv.JobID, j, status, string(debug.Stack()))
+	if logger.GetMinLogLevel() >= logging.DebugLevel {
+		errx := j.dbGetFields(&j.priv.Status)
+		if errx != nil {
+			j.LogError("failed to get job status from DB: %s, stack: %s", errx.Error(), string(debug.Stack()))
+		}
+		currentStatus = j.priv.Status
+		j.LogTrace("setStatus(%s@%p) - status is '%s', stack: %s", j.priv.JobID, j, status, string(debug.Stack()))
+	}
+
 	j.priv.Status = status
 	if statusErr == "" {
-		j.LogDebug("%s", status)
+		j.LogDebug("%s -> %s", currentStatus, status)
 		return j.dbSaveFields(append([]interface{}{&j.priv.Status}, fields...)...)
 	} else {
 		j.priv.Error = statusErr
-		j.LogDebug("%s (%s)", status, statusErr)
+		j.LogDebug("%s -> %s (%s)", currentStatus, status, statusErr)
 		return j.dbSaveFields(append([]interface{}{&j.priv.Status, &j.priv.Error}, fields...)...)
 	}
 }
@@ -336,7 +582,7 @@ func (j *JobObj) getStatus() JobStatus {
 	currentStatus := j.priv.Status
 	errx := j.dbGetFields(&j.priv.Status)
 	if errx != nil {
-		j.LogError("failed to get job status from DB: %s", errx.Error())
+		j.LogError("failed to get job status from DB: %s, stack: %s", errx.Error(), string(debug.Stack()))
 	}
 	if currentStatus != j.priv.Status {
 		j.LogError("internal error: job status mismatch: %s != %s, stack: %s", currentStatus, j.priv.Status, string(debug.Stack()))
@@ -591,7 +837,7 @@ func (j *JobObj) dbGetFields(fields ...interface{}) errorx.Error {
 		"tenant_id": auth.GetTenantID(),
 	}
 	if errx := orm.OrmGetObjFields(&j.priv, pkFields, fields...); errx != nil {
-		j.LogError("failed to get job fields: %s", errx.Error())
+		j.LogError("failed to get job fields: %s, stack: %s", errx.Error(), string(debug.Stack()))
 		return errx
 	}
 	return nil

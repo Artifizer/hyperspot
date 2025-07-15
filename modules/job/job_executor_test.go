@@ -2,9 +2,11 @@ package job
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -351,7 +353,7 @@ func TestJobExecutor_GetJobByIdempotencyKey(t *testing.T) {
 
 	// Verify the retrieved job matches the original
 	assert.Equal(t, job.GetJobID(), retrievedJob.GetJobID(), "JobID should match")
-	assert.Equal(t, job.GetIdempotencyKey(), retrievedJob.GetIdempotencyKey(), "IdempotencyKey should match")
+	assert.Equal(t, job.getIdempotencyKey(), retrievedJob.getIdempotencyKey(), "IdempotencyKey should match")
 	assert.Equal(t, job.GetType(), retrievedJob.GetType(), "JobType should match")
 	assert.Equal(t, job.getParams(), retrievedJob.getParams(), "Payload should match")
 
@@ -2773,5 +2775,564 @@ func TestJobExecutor_DeleteFinalStates(t *testing.T) {
 		// Should not be found after delete
 		_, errx = JEGetJobByID(ctx, job.GetJobID())
 		assert.Error(t, errx, "Job '%s' should not be found after delete", job.GetJobID())
+	})
+}
+
+// TestJobExecutor_SaveWorkerSnapshot tests the SaveWorkerSnapshot functionality
+func TestJobExecutor_SaveWorkerSnapshot(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a job type for testing snapshots
+	snapshotJobType := RegisterJobType(JobTypeParams{
+		Group: &JobGroup{
+			Name:        "snapshot-test",
+			Queue:       JobQueueCompute,
+			Description: "Snapshot test job group",
+		},
+		Name:                           "snapshot:test:job",
+		Description:                    "Job for testing worker snapshots",
+		Params:                         &struct{}{},
+		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerIsSuspendable:            true,
+	})
+
+	// Test 1: Save a simple string snapshot
+	t.Run("SaveStringSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		snapshot := "test snapshot data"
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, snapshot, loadedSnapshot)
+	})
+
+	// Test 2: Save a complex struct snapshot
+	t.Run("SaveStructSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		type TestSnapshot struct {
+			Counter   int               `json:"counter"`
+			Data      map[string]string `json:"data"`
+			Timestamp int64             `json:"timestamp"`
+		}
+
+		snapshot := TestSnapshot{
+			Counter: 42,
+			Data: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+			Timestamp: time.Now().Unix(),
+		}
+
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved correctly
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+
+		// Convert back to struct for comparison
+		var loadedStruct TestSnapshot
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		err := json.Unmarshal(loadedJSON, &loadedStruct)
+		assert.NoError(t, err)
+
+		assert.Equal(t, snapshot.Counter, loadedStruct.Counter)
+		assert.Equal(t, snapshot.Data, loadedStruct.Data)
+		assert.Equal(t, snapshot.Timestamp, loadedStruct.Timestamp)
+	})
+
+	// Test 3: Save a slice snapshot
+	t.Run("SaveSliceSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		snapshot := []int{1, 2, 3, 4, 5}
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, snapshot, loadedSnapshot)
+	})
+
+	// Test 4: Save a map snapshot
+	t.Run("SaveMapSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		snapshot := map[string]interface{}{
+			"string": "value",
+			"int":    123,
+			"float":  45.67,
+			"bool":   true,
+			"null":   nil,
+		}
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, snapshot, loadedSnapshot)
+	})
+
+	// Test 5: Save nil snapshot
+	t.Run("SaveNilSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		errx = job.SaveWorkerSnapshot(nil)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Nil(t, loadedSnapshot)
+	})
+
+	// Test 6: Save empty string snapshot
+	t.Run("SaveEmptyStringSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		snapshot := ""
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, snapshot, loadedSnapshot)
+	})
+
+	// Test 7: Save snapshot with special characters
+	t.Run("SaveSpecialCharactersSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		snapshot := "test with \"quotes\", \n newlines, \t tabs, and unicode: 🚀"
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, snapshot, loadedSnapshot)
+	})
+
+	// Test 1: Save very large snapshot
+	t.Run("SaveLargeSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create a large snapshot (but not too large to avoid test output issues)
+		largeData := make([]string, 1000)
+		for i := range largeData {
+			largeData[i] = fmt.Sprintf("data_%d_%s", i, strings.Repeat("x", 50))
+		}
+
+		errx = job.SaveWorkerSnapshot(largeData)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(largeData)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
+	})
+}
+
+// TestJobExecutor_LoadWorkerSnapshot tests the LoadWorkerSnapshot functionality
+func TestJobExecutor_LoadWorkerSnapshot(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a job type for testing snapshots
+	snapshotJobType := RegisterJobType(JobTypeParams{
+		Group: &JobGroup{
+			Name:        "snapshot-load-test",
+			Queue:       JobQueueCompute,
+			Description: "Snapshot load test job group",
+		},
+		Name:                           "snapshot:load:test:job",
+		Description:                    "Job for testing worker snapshot loading",
+		Params:                         &struct{}{},
+		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerIsSuspendable:            true,
+	})
+
+	// Test 1: Load snapshot from job with no saved snapshot
+	t.Run("LoadEmptySnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Load snapshot from job that has never had a snapshot saved
+		snapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Nil(t, snapshot) // Should return nil for empty snapshot
+	})
+
+	// Test 2: Load snapshot after saving
+	t.Run("LoadAfterSave", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		originalSnapshot := map[string]interface{}{
+			"test": "data",
+			"num":  42,
+		}
+
+		// Save snapshot
+		errx = job.SaveWorkerSnapshot(originalSnapshot)
+		assert.NoError(t, errx)
+
+		// Load snapshot
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, originalSnapshot, loadedSnapshot)
+	})
+
+	// Test 3: Load snapshot multiple times
+	t.Run("LoadMultipleTimes", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		originalSnapshot := "test data"
+
+		// Save snapshot
+		errx = job.SaveWorkerSnapshot(originalSnapshot)
+		assert.NoError(t, errx)
+
+		// Load snapshot multiple times
+		for i := 0; i < 5; i++ {
+			loadedSnapshot, errx := job.LoadWorkerSnapshot()
+			assert.NoError(t, errx)
+			assert.Equal(t, originalSnapshot, loadedSnapshot)
+		}
+	})
+
+	// Test 4: Load snapshot with complex nested structure
+	t.Run("LoadComplexSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		originalSnapshot := map[string]interface{}{
+			"level1": map[string]interface{}{
+				"level2": map[string]interface{}{
+					"level3": []interface{}{
+						"item1",
+						map[string]interface{}{
+							"nested": "value",
+						},
+						123,
+					},
+				},
+			},
+			"array": []interface{}{
+				"string",
+				456,
+				true,
+				nil,
+			},
+		}
+
+		// Save snapshot
+		errx = job.SaveWorkerSnapshot(originalSnapshot)
+		assert.NoError(t, errx)
+
+		// Load snapshot
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, originalSnapshot, loadedSnapshot)
+	})
+
+	// Test 5: Load snapshot after job status changes
+	t.Run("LoadAfterStatusChange", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		originalSnapshot := "persistent data"
+
+		// Save snapshot
+		errx = job.SaveWorkerSnapshot(originalSnapshot)
+		assert.NoError(t, errx)
+
+		// Change job status
+		errx = JEScheduleJob(ctx, job)
+		assert.NoError(t, errx)
+
+		// Load snapshot after status change
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.Equal(t, originalSnapshot, loadedSnapshot)
+	})
+}
+
+// TestJobExecutor_WorkerSnapshotConcurrency tests concurrent access to worker snapshots
+func TestJobExecutor_WorkerSnapshotConcurrency(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a job type for testing concurrent snapshots
+	snapshotJobType := RegisterJobType(JobTypeParams{
+		Group: &JobGroup{
+			Name:        "snapshot-concurrency-test",
+			Queue:       JobQueueCompute,
+			Description: "Snapshot concurrency test job group",
+		},
+		Name:                           "snapshot:concurrency:test:job",
+		Description:                    "Job for testing concurrent worker snapshots",
+		Params:                         &struct{}{},
+		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerIsSuspendable:            true,
+	})
+
+	// Test concurrent save operations
+	t.Run("ConcurrentSave", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		errors := make(chan errorx.Error, numGoroutines)
+
+		// Start multiple goroutines saving snapshots concurrently
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				snapshot := map[string]interface{}{
+					"goroutine_id": id,
+					"timestamp":    time.Now().UnixNano(),
+				}
+				errx := job.SaveWorkerSnapshot(snapshot)
+				if errx != nil {
+					errors <- errx
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		// Check for any errors
+		for err := range errors {
+			assert.NoError(t, err)
+		}
+
+		// Verify that a snapshot was saved (one of the concurrent saves should succeed)
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		assert.NotNil(t, loadedSnapshot)
+	})
+
+	// Test concurrent save and load operations
+	t.Run("ConcurrentSaveAndLoad", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		var wg sync.WaitGroup
+		numGoroutines := 5
+		errors := make(chan errorx.Error, numGoroutines*2)
+
+		// Start goroutines that save snapshots
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				snapshot := map[string]interface{}{
+					"save_id":   id,
+					"timestamp": time.Now().UnixNano(),
+				}
+				errx := job.SaveWorkerSnapshot(snapshot)
+				if errx != nil {
+					errors <- errx
+				}
+			}(i)
+		}
+
+		// Start goroutines that load snapshots
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				_, errx := job.LoadWorkerSnapshot()
+				if errx != nil {
+					errors <- errx
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		// Check for any errors
+		for err := range errors {
+			assert.NoError(t, err)
+		}
+	})
+}
+
+// TestJobExecutor_WorkerSnapshotEdgeCases tests edge cases for worker snapshots
+func TestJobExecutor_WorkerSnapshotEdgeCases(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a job type for testing edge cases
+	snapshotJobType := RegisterJobType(JobTypeParams{
+		Group: &JobGroup{
+			Name:        "snapshot-edge-test",
+			Queue:       JobQueueCompute,
+			Description: "Snapshot edge case test job group",
+		},
+		Name:                           "snapshot:edge:test:job",
+		Description:                    "Job for testing worker snapshot edge cases",
+		Params:                         &struct{}{},
+		WorkerParamsValidationCallback: func(ctx context.Context, job *JobObj) errorx.Error { return nil },
+		WorkerExecutionCallback:        func(ctx context.Context, job *JobObj, progress chan<- float32) errorx.Error { return nil },
+		WorkerIsSuspendable:            true,
+	})
+
+	// Test 1: Save very large snapshot
+	t.Run("SaveLargeSnapshot", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create a large snapshot (but not too large to avoid test output issues)
+		largeData := make([]string, 1000)
+		for i := range largeData {
+			largeData[i] = fmt.Sprintf("data_%d_%s", i, strings.Repeat("x", 50))
+		}
+
+		errx = job.SaveWorkerSnapshot(largeData)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+		// Compare JSON representations to avoid type mismatch
+		originalJSON, _ := json.Marshal(largeData)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
+	})
+
+	// Test 2: Save snapshot with circular references (should fail gracefully)
+	t.Run("SaveCircularReference", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create a map with circular reference
+		circularMap := make(map[string]interface{})
+		circularMap["self"] = circularMap
+
+		// This should fail due to circular reference
+		errx = job.SaveWorkerSnapshot(circularMap)
+		assert.Error(t, errx)
+		assert.Contains(t, errx.Error(), "failed to marshal")
+	})
+
+	// Test 3: Save snapshot with channel (should fail gracefully)
+	t.Run("SaveChannel", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create a struct with a channel
+		type TestStruct struct {
+			Data    string
+			Channel chan int
+		}
+
+		snapshot := TestStruct{
+			Data:    "test",
+			Channel: make(chan int),
+		}
+
+		// This should fail due to channel not being JSON serializable
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.Error(t, errx)
+		assert.Contains(t, errx.Error(), "failed to marshal")
+	})
+
+	// Test 4: Save and load snapshot with function (should fail gracefully)
+	t.Run("SaveFunction", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create a struct with a function
+		type TestStruct struct {
+			Data     string
+			Function func()
+		}
+
+		snapshot := TestStruct{
+			Data:     "test",
+			Function: func() {},
+		}
+
+		// This should fail due to function not being JSON serializable
+		errx = job.SaveWorkerSnapshot(snapshot)
+		assert.Error(t, errx)
+		assert.Contains(t, errx.Error(), "failed to marshal")
+	})
+
+	// Test 5: Save snapshot with very deep nesting
+	t.Run("SaveDeepNesting", func(t *testing.T) {
+		job, errx := JENewJob(ctx, uuid.New(), snapshotJobType, `{}`)
+		assert.NoError(t, errx)
+		assert.NotNil(t, job)
+
+		// Create deeply nested structure
+		deepNested := make(map[string]interface{})
+		current := deepNested
+		for i := 0; i < 100; i++ {
+			current["level"] = i
+			if i < 99 {
+				current["next"] = make(map[string]interface{})
+				current = current["next"].(map[string]interface{})
+			}
+		}
+
+		errx = job.SaveWorkerSnapshot(deepNested)
+		assert.NoError(t, errx)
+
+		// Verify the snapshot was saved
+		loadedSnapshot, errx := job.LoadWorkerSnapshot()
+		assert.NoError(t, errx)
+
+		// JSON unmarshaling converts numbers to float64, so we need to compare the structure differently
+		// Convert both to JSON strings for comparison
+		originalJSON, _ := json.Marshal(deepNested)
+		loadedJSON, _ := json.Marshal(loadedSnapshot)
+		assert.Equal(t, string(originalJSON), string(loadedJSON))
 	})
 }
