@@ -78,13 +78,7 @@ func registerFileParserAPIRoutes(humaApi huma.API) {
 		// Parse the document
 		doc, err := ParseLocalDocument(filePath)
 		if err != nil {
-			// Check if it's an errorx error (like unsupported file type)
-			if errx, ok := err.(errorx.Error); ok {
-				return nil, errx.HumaError()
-			}
-
-			apiLogger.Error("Failed to parse local document: %v", err)
-			return nil, huma.Error500InternalServerError(fmt.Sprintf("Failed to parse document: %v", err))
+			return nil, err.HumaError()
 		}
 
 		return &FileParseResponse{

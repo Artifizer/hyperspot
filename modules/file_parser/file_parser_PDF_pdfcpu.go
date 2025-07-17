@@ -175,13 +175,14 @@ func (p *FileParserPDFPdfcpu) fallbackTextExtraction(content string) string {
 
 	for _, char := range content {
 		if escaped {
-			if char == 'n' {
+			switch char {
+			case 'n':
 				result.WriteRune('\n')
-			} else if char == 'r' {
+			case 'r':
 				result.WriteRune('\r')
-			} else if char == 't' {
+			case 't':
 				result.WriteRune('\t')
-			} else {
+			default:
 				result.WriteRune(char)
 			}
 			escaped = false
