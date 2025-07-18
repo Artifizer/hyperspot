@@ -1,0 +1,30 @@
+## Commit Message Format
+
+Each commit message should follow this format:
+
+```plaintext
+<type>(<module>): <description>
+```
+
+- **`<type>`**: The type of change (see the list below).
+- **`<module>` (optional)**: The specific part of the project affected.
+- **`<description>`**: A concise summary of the change in the imperative mood (e.g., "Fix bug in auth module" instead of "Fixed bug").
+
+## Accepted Commit Types
+
+| Type         | Meaning |
+|--------------|---------|
+| **feat**     | A new feature |
+| **fix**      | A bug fix |
+| **tech**     | A technical improvement or change |
+| **cleanup**  | Code cleanup |
+| **refactor** | Code restructuring without functional changes |
+| **test**     | Adding or modifying tests |
+| **docs**     | Documentation updates |
+| **style**    | Code style changes (whitespace, formatting, etc.) |
+| **chore**    | Miscellaneous tasks (e.g., dependency updates, tooling changes) |
+| **perf**     | Performance improvements |
+| **ci**       | Changes to CI/CD configurations |
+| **build**    | Changes to the build system or dependencies |
+| **revert**   | Reverting a previous commit |
+| **security** | Security fixes |
