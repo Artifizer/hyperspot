@@ -14,11 +14,16 @@ import (
 	"github.com/hypernetix/hyperspot/libs/config"
 	"github.com/hypernetix/hyperspot/libs/logging"
 	"github.com/hypernetix/hyperspot/libs/openapi_client"
+	"github.com/hypernetix/hyperspot/modules/syscap"
 )
+
+// LLMServiceName represents the name of the LLM service
+type LLMServiceName string
 
 // BaseLLMService provides common functionality for LLM services
 type BaseLLMService struct {
 	LLMServicePtr LLMService
+	syscap        *syscap.SysCap
 	Name          string
 	APIKeyEnvVar  string
 	baseURL       string
@@ -29,9 +34,10 @@ type BaseLLMService struct {
 }
 
 // NewBaseLLMService creates a new base service
-func NewBaseLLMService(LLMServicePtr LLMService, name string, baseURL string, serviceConfig config.ConfigLLMService) *BaseLLMService {
+func NewBaseLLMService(LLMServicePtr LLMService, name string, displayName string, baseURL string, serviceConfig config.ConfigLLMService) *BaseLLMService {
 	srv := &BaseLLMService{
 		LLMServicePtr: LLMServicePtr,
+		syscap:        registerLLMServiceSysCap(LLMServicePtr, name, displayName),
 		Name:          name,
 		baseURL:       baseURL,
 		APIKeyEnvVar:  serviceConfig.APIKeyEnvVar,
@@ -214,6 +220,7 @@ func (s *BaseLLMService) setLikelyIsAlive() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.syscap.SetPresent(true)
 	s.llmAPIClient.SetUpstreamLikelyIsOnline()
 }
 
@@ -221,6 +228,7 @@ func (s *BaseLLMService) setLikelyIsOffline(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.syscap.SetPresent(false)
 	s.llmAPIClient.SetUpstreamLikelyIsOffline(ctx)
 }
 
