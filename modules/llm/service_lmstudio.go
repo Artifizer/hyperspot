@@ -14,6 +14,8 @@ import (
 	"github.com/hypernetix/lmstudio-go/pkg/lmstudio"
 )
 
+var LMStudioServiceName = LLMServiceName("lm_studio")
+
 type lmstudioLogger struct {
 	logger *logging.Logger
 }
@@ -53,15 +55,15 @@ type LMStudioService struct {
 // NewLMStudioService creates a new LM Studio service
 func NewLMStudioService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *LMStudioService {
 	service := &LMStudioService{}
-	service.BaseLLMService = NewBaseLLMService(service, "lm_studio", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "lm_studio")
+	service.BaseLLMService = NewBaseLLMService(service, string(LMStudioServiceName), "LM Studio", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(LMStudioServiceName))
 	service.lmstudioClientLogger = &lmstudioLogger{logger: service.logger}
 	service.lmstudioClient = lmstudio.NewLMStudioClient(baseURL, service.lmstudioClientLogger)
 	return service
 }
 
 func (s *LMStudioService) GetName() string {
-	return "lm_studio"
+	return string(LMStudioServiceName)
 }
 
 func (s *LMStudioService) initModelFromAPIResponse(data map[string]interface{}) (*LLMModel, error) {
@@ -271,7 +273,7 @@ func (s *LMStudioService) GetCapabilities() *LLMServiceCapabilities {
 }
 
 func init() {
-	config.RegisterLLMServiceConfig("lm_studio", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(LMStudioServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "LMSTUDIO_API_KEY",
 		URLs:         []string{"http://localhost:1234", "http://localhost:12345"},

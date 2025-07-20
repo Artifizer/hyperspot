@@ -8,6 +8,8 @@ import (
 	"github.com/hypernetix/hyperspot/libs/logging"
 )
 
+var GPT4AllServiceName = LLMServiceName("gpt4all")
+
 // GPT4AllService implements the Service interface for GPT4All
 type GPT4AllService struct {
 	*BaseLLMService
@@ -17,13 +19,13 @@ type GPT4AllService struct {
 // NewGPT4AllService creates a new GPT4All service
 func NewGPT4AllService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *GPT4AllService {
 	service := &GPT4AllService{}
-	service.BaseLLMService = NewBaseLLMService(service, "gpt4all", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "gpt4all")
+	service.BaseLLMService = NewBaseLLMService(service, string(GPT4AllServiceName), "GPT4All", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(GPT4AllServiceName))
 	return service
 }
 
 func (s *GPT4AllService) GetName() string {
-	return "gpt4all"
+	return string(GPT4AllServiceName)
 }
 
 func (s *GPT4AllService) ListModels(ctx context.Context, pageRequest *api.PageAPIRequest) ([]*LLMModel, error) {
@@ -56,7 +58,7 @@ func (s *GPT4AllService) GetCapabilities() *LLMServiceCapabilities {
 }
 
 func init() {
-	config.RegisterLLMServiceConfig("gpt4all", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(GPT4AllServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "GPT4ALL_API_KEY",
 		URLs:         []string{"http://localhost:4891"},

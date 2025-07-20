@@ -17,23 +17,27 @@ import (
 	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
+var MockServiceName = LLMServiceName("mock")
+
 // MockService implements the LLMService interface for testing purposes
 type MockService struct {
 	*BaseLLMService
-	logger *logging.Logger
-	mu     utils.DebugMutex
+	logger         *logging.Logger
+	mu             utils.DebugMutex
+	PingShouldFail bool
+	PingCount      int
 }
 
 // NewMockService creates a new mock service
 func NewMockService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *MockService {
 	service := &MockService{}
-	service.BaseLLMService = NewBaseLLMService(service, "mock", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "mock")
+	service.BaseLLMService = NewBaseLLMService(service, string(MockServiceName), "Mock Server", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(MockServiceName))
 	return service
 }
 
 func (s *MockService) GetName() string {
-	return "mock"
+	return string(MockServiceName)
 }
 
 // IsExternal returns false as mock service is internal
@@ -344,7 +348,13 @@ func (s *MockService) RequestAndParse(ctx context.Context, method, path string, 
 
 // Ping overrides the base method to always return success for mock service
 func (s *MockService) Ping(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.logger.Debug("Pinging mock service")
+	s.PingCount++
+	if s.PingShouldFail {
+		return fmt.Errorf("mock service ping failed as requested")
+	}
 	s.setLikelyIsAlive()
 	return nil
 }
@@ -458,7 +468,7 @@ func RegisterMockService(ctx context.Context) {
 
 	registeredMockService = true
 
-	config.RegisterLLMServiceConfig("mock", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(MockServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "MOCK_API_KEY",
 		URLs:         []string{"http://localhost:8000"},
@@ -472,7 +482,7 @@ func RegisterMockService(ctx context.Context) {
 
 	cfg := config.Get()
 
-	cfg.LLM.LLMServices["mock"] = config.ConfigLLMService{
+	cfg.LLM.LLMServices[string(MockServiceName)] = config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "MOCK_API_KEY",
 		URLs:         []string{"http://localhost:8000"},

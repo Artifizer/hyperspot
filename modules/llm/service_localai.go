@@ -12,6 +12,8 @@ import (
 	"github.com/hypernetix/hyperspot/libs/openapi_client"
 )
 
+var LocalAIServiceName = LLMServiceName("localai")
+
 // LocalAIService implements the Service interface for LocalAI
 type LocalAIService struct {
 	*BaseLLMService
@@ -21,13 +23,13 @@ type LocalAIService struct {
 // NewLocalAIService creates a new LocalAI service
 func NewLocalAIService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *LocalAIService {
 	service := &LocalAIService{}
-	service.BaseLLMService = NewBaseLLMService(service, "localai", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "localai")
+	service.BaseLLMService = NewBaseLLMService(service, string(LocalAIServiceName), "LocalAI", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(LocalAIServiceName))
 	return service
 }
 
 func (s *LocalAIService) GetName() string {
-	return "localai"
+	return string(LocalAIServiceName)
 }
 
 func (s *LocalAIService) InstallModel(ctx context.Context, modelName string, progress chan<- float32) error {
@@ -117,7 +119,7 @@ func (s *LocalAIService) GetCapabilities() *LLMServiceCapabilities {
 }
 
 func init() {
-	config.RegisterLLMServiceConfig("localai", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(LocalAIServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "LOCALAI_API_KEY",
 		URLs:         []string{"http://localhost:8080", "http://localhost:8081"},
