@@ -17,6 +17,8 @@ import (
 	"github.com/hypernetix/hyperspot/libs/openapi_client"
 )
 
+var OllamaServiceName = LLMServiceName("ollama")
+
 // OllamaService implements the Service interface for Ollama
 type OllamaService struct {
 	*BaseLLMService
@@ -26,13 +28,13 @@ type OllamaService struct {
 // NewOllamaService creates a new Ollama service
 func NewOllamaService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *OllamaService {
 	service := &OllamaService{}
-	service.BaseLLMService = NewBaseLLMService(service, "ollama", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "ollama")
+	service.BaseLLMService = NewBaseLLMService(service, string(OllamaServiceName), "Ollama", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(OllamaServiceName))
 	return service
 }
 
 func (s *OllamaService) GetName() string {
-	return "ollama"
+	return string(OllamaServiceName)
 }
 
 func (s *OllamaService) InstallModel(ctx context.Context, modelName string, progress chan<- float32) error {
@@ -364,7 +366,7 @@ func (s *OllamaService) GetEmbeddings(
 }
 
 func init() {
-	config.RegisterLLMServiceConfig("ollama", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(OllamaServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "OLLAMA_API_KEY",
 		URLs:         []string{"http://localhost:11434"},

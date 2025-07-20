@@ -11,11 +11,13 @@ type AnthropicService struct {
 	logger *logging.Logger
 }
 
+var AnthropicServiceName = LLMServiceName("anthropic")
+
 // NewAnthropicService creates a new Anthropic service
 func NewAnthropicService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *AnthropicService {
 	service := &AnthropicService{}
-	service.BaseLLMService = NewBaseLLMService(service, "anthropic", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", "anthropic")
+	service.BaseLLMService = NewBaseLLMService(service, string(AnthropicServiceName), "Anthropic", baseURL, serviceConfig)
+	service.logger = logger.WithField("service", string(AnthropicServiceName))
 	return service
 }
 
@@ -44,7 +46,7 @@ func (s *AnthropicService) GetCapabilities() *LLMServiceCapabilities {
 
 // Implement other required methods following the same pattern as LMStudioService
 func init() {
-	config.RegisterLLMServiceConfig("anthropic", config.ConfigLLMService{
+	config.RegisterLLMServiceConfig(string(AnthropicServiceName), config.ConfigLLMService{
 		APIFormat:    "openai",
 		APIKeyEnvVar: "CLAUDE_API_KEY",
 		URLs:         []string{"https://api.anthropic.com"},
