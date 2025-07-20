@@ -234,5 +234,7 @@ func initDockerExecutor() error {
 		})
 	}
 	RegisterDockerImageJob()
+	registerDockerSysCaps()
+
 	return nil
 }

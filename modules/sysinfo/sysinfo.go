@@ -46,11 +46,18 @@ func SaveSysInfoToDB(sysInfo *utils.SystemInfo) error {
 	return db.DB().Save(sysInfo).Error
 }
 
+func initMain() error {
+	initHardwareSysCaps()
+	initOSSysCaps()
+	return nil
+}
+
 func InitModule() {
 	core.RegisterModule(&core.Module{
 		Migrations: []interface{}{
 			&utils.SystemInfo{},
 		},
+		InitMain:      initMain,
 		InitAPIRoutes: initSysInfoAPIRoutes,
 		Name:          "sysinfo",
 	})
