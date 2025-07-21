@@ -6,21 +6,27 @@ go 1.23.0
 toolchain go1.23.5
 
 require (
+	github.com/Artifizer/pdf v0.0.0-20250630222835-3760c90aa740
 	github.com/Masterminds/sprig/v3 v3.3.0
+	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/StackExchange/wmi v1.2.1
 	github.com/danielgtaylor/huma/v2 v2.34.0
 	github.com/distatus/battery v0.11.0
-	github.com/docker/docker v25.0.0+incompatible
+	github.com/docker/docker v25.0.6+incompatible
 	github.com/fatih/color v1.18.0
 	github.com/go-chi/chi/v5 v5.2.2
+	github.com/gomutex/godocx v0.1.5
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-getter v1.7.8
+	github.com/hypernetix/lmstudio-go v1.0.2
 	github.com/mindprince/gonvml v0.0.0-20211002210717-ac0b66419a41
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/prometheus/client_golang v1.22.0
+	github.com/olekukonko/tablewriter v1.0.8
+	github.com/pdfcpu/pdfcpu v0.11.0
 	github.com/shirou/gopsutil/v4 v4.25.6
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.10.0
+	github.com/urfave/cli/v2 v2.27.7
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	go.uber.org/zap v1.21.0
@@ -34,15 +40,21 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
-	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
+	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
-	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/prometheus/client_model v0.6.1 // indirect
-	github.com/prometheus/common v0.62.0 // indirect
-	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/hhrutter/lzw v1.0.0 // indirect
+	github.com/hhrutter/pkcs7 v0.2.0 // indirect
+	github.com/hhrutter/tiff v1.0.2 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/olekukonko/errors v0.0.0-20250405072817-4e6d85265da6 // indirect
+	github.com/olekukonko/ll v0.0.8 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
+	golang.org/x/image v0.27.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
