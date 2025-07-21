@@ -75,7 +75,7 @@ func RegisterAPIRoutes(registerFunc RegisterAPIRoutesFunc) {
 }
 
 // SetupAPI initializes and configures the API
-func SetupAPI(router *chi.Mux) huma.API {
+func SetupAPI(router *chi.Mux, version string) huma.API {
 	serverTimeout := config.GetServerTimeout() // Pass minimum timeout in seconds
 
 	// Add other middleware
@@ -84,7 +84,7 @@ func SetupAPI(router *chi.Mux) huma.API {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(serverTimeout))
 
-	var humaConfig = huma.DefaultConfig("HyperSpot Server API", "0.1.0")
+	var humaConfig = huma.DefaultConfig("HyperSpot Server API", version)
 
 	// Use the default description from the apiConfigInstance
 	humaConfig.OpenAPI.Info.Description = apiConfigInstance.DocsOverview

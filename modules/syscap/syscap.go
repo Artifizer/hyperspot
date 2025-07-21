@@ -22,6 +22,12 @@ const (
 	CategoryModule     SysCapCategory = "module"
 )
 
+// Predefined syscap names
+const (
+	SysCapaModuleDesktop SysCapName = "desktop"
+	SysCapaModuleServer  SysCapName = "server"
+)
+
 func isValidSysCapCategory(category SysCapCategory) errorx.Error {
 	if category == CategoryHardware || category == CategorySoftware || category == CategoryOS || category == CategoryLLMService || category == CategoryModule {
 		return nil
