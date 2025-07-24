@@ -13,20 +13,27 @@ import (
 	"github.com/hypernetix/hyperspot/libs/db"
 	"github.com/hypernetix/hyperspot/libs/errorx"
 	"github.com/hypernetix/hyperspot/libs/orm"
+	"github.com/hypernetix/hyperspot/libs/utils"
+	"github.com/hypernetix/hyperspot/modules/file_parser"
+	"github.com/hypernetix/hyperspot/modules/syscap"
 )
 
 // SystemPrompt represents a system prompt that can be attached to chat threads
 type SystemPrompt struct {
-	SequenceID  int64     `json:"-" gorm:"primaryKey;autoIncrement:true"`
-	ID          uuid.UUID `json:"id" gorm:"index"`
-	TenantID    uuid.UUID `json:"-" gorm:"index"`
-	UserID      uuid.UUID `json:"user_id" gorm:"index"`
-	Name        string    `json:"name"`
-	Content     string    `json:"content"`
-	CreatedAtMs int64     `json:"created_at" gorm:"index" doc:"unix timestamp in milliseconds"`
-	UpdatedAtMs int64     `json:"updated_at" gorm:"index" doc:"unix timestamp in milliseconds"`
-	UIMeta      string    `json:"ui_meta" doc:"UI json metadata, not used by the backend"`
-	IsDeleted   bool      `json:"-" gorm:"index"`
+	SequenceID   int64     `json:"-" gorm:"primaryKey;autoIncrement:true"`
+	ID           uuid.UUID `json:"id" gorm:"index"`
+	TenantID     uuid.UUID `json:"-" gorm:"index"`
+	UserID       uuid.UUID `json:"user_id" gorm:"index"`
+	Name         string    `json:"name"`
+	Content      string    `json:"content"`
+	CreatedAtMs  int64     `json:"created_at" gorm:"index" doc:"unix timestamp in milliseconds"`
+	UpdatedAtMs  int64     `json:"updated_at" gorm:"index" doc:"unix timestamp in milliseconds"`
+	UIMeta       string    `json:"ui_meta" doc:"UI json metadata, not used by the backend"`
+	IsDeleted    bool      `json:"-" gorm:"index"`
+	IsDefault    bool      `json:"is_default" gorm:"index" doc:"if true, this prompt will be automatically attached to every thread"`
+	FilePath     string    `json:"file_path" doc:"path to the file that contains the system prompt"`
+	FileChecksum string    `json:"-"`
+	AutoUpdate   bool      `json:"auto_update" doc:"if true, system prompt needs to be updated on every chat message"`
 }
 
 // ChatThreadSystemPrompt represents the many-to-many relationship between ChatThread and SystemPrompt
@@ -59,14 +66,73 @@ func (p *SystemPrompt) DbSaveFields(fields ...interface{}) errorx.Error {
 	return nil
 }
 
+func (p *SystemPrompt) GetContent() string {
+	if p.AutoUpdate && p.FilePath != "" {
+		fields := []interface{}{}
+		if errx := p.updateSystemPromptFromFile(&fields); errx != nil {
+			return ""
+		}
+
+		if len(fields) > 0 {
+			p.DbSaveFields(fields...)
+		}
+	}
+	return p.Content
+}
+
+// updateSystemPromptFromFile() updates the system prompt from a file if needed
+// i.e. if file checksum changed. The fields parameter is used to return the fields that
+// were updated for later saving to the database
+func (p *SystemPrompt) updateSystemPromptFromFile(fields *[]interface{}) errorx.Error {
+	if !syscap.SysCapIsPresent(syscap.CategoryModule, syscap.SysCapaModuleDesktop) {
+		return errorx.NewErrBadRequest("System prompt creation from file is not allowed")
+	}
+
+	if p.FilePath == "" {
+		return errorx.NewErrBadRequest("System prompt file is not set, update from file is not allowed")
+	}
+
+	if !utils.FileExists(p.FilePath) {
+		return errorx.NewErrNotFound("file does not exist or can't be accessed: %s", p.FilePath)
+	}
+
+	fileChecksum, err := utils.GetFileChecksum(p.FilePath)
+	if err != nil {
+		return errorx.NewErrInternalServerError("Failed to get file checksum: " + err.Error())
+	}
+
+	if fileChecksum != p.FileChecksum {
+		doc, errx := file_parser.ParseLocalDocument(p.FilePath)
+		if errx != nil {
+			return errx
+		}
+
+		p.Content = doc.GetTextContent()
+		p.FileChecksum = doc.FileChecksum
+		if fields != nil {
+			*fields = append(*fields, &p.Content)
+			*fields = append(*fields, &p.FileChecksum)
+		}
+	}
+
+	return nil
+}
+
 // CreateSystemPrompt creates a new system prompt
 func CreateSystemPrompt(
 	ctx context.Context,
 	name string,
 	content string,
 	uiMeta string,
+	isDefault bool,
+	fromFile string,
+	AutoUpdate bool,
 ) (*SystemPrompt, errorx.Error) {
 	nowMs := time.Now().UnixMilli()
+
+	if AutoUpdate && fromFile == "" {
+		return nil, errorx.NewErrBadRequest("System prompt file is not set, update from file is not allowed")
+	}
 
 	prompt := &SystemPrompt{
 		ID:          uuid.New(),
@@ -78,6 +144,16 @@ func CreateSystemPrompt(
 		CreatedAtMs: nowMs,
 		UpdatedAtMs: nowMs,
 		IsDeleted:   false,
+		IsDefault:   isDefault,
+		FilePath:    fromFile,
+		AutoUpdate:  AutoUpdate,
+	}
+
+	if fromFile != "" {
+		errx := prompt.updateSystemPromptFromFile(nil)
+		if errx != nil {
+			return nil, errx
+		}
 	}
 
 	err := db.DB().Create(&prompt).Error
@@ -100,6 +176,9 @@ func GetSystemPrompt(ctx context.Context, promptID uuid.UUID) (*SystemPrompt, er
 	if err != nil {
 		return nil, errorx.NewErrNotFound(fmt.Sprintf("System prompt '%s' not found", promptID.String()))
 	}
+
+	// Update content on any prompt fetch
+	prompt.Content = prompt.GetContent()
 
 	return &prompt, nil
 }
@@ -133,14 +212,56 @@ func UpdateSystemPrompt(
 	name *string,
 	content *string,
 	uiMeta *string,
+	isDefault *bool,
+	filePath *string,
+	autoUpdate *bool,
 ) (*SystemPrompt, errorx.Error) {
 	prompt, errx := GetSystemPrompt(ctx, promptID)
 	if errx != nil {
 		return nil, errx
 	}
 
-	// Only save fields that were provided in the request
 	var fields []interface{}
+
+	if isDefault != nil {
+		if *isDefault != prompt.IsDefault {
+			prompt.IsDefault = *isDefault
+			fields = append(fields, &prompt.IsDefault)
+		}
+	}
+
+	if filePath != nil {
+		if *filePath == "" && prompt.FilePath != "" {
+			// If file path is removed, also remove content
+			prompt.Content = ""
+			fields = append(fields, &prompt.Content)
+		}
+		prompt.FilePath = *filePath
+		fields = append(fields, &prompt.FilePath)
+		if *filePath == "" {
+			prompt.AutoUpdate = false
+			fields = append(fields, &prompt.AutoUpdate)
+			autoUpdate = &prompt.AutoUpdate
+		}
+	}
+
+	if prompt.FilePath != "" {
+		if errx := prompt.updateSystemPromptFromFile(&fields); errx != nil {
+			return nil, errx
+		}
+	}
+
+	if autoUpdate != nil {
+		if *autoUpdate && prompt.FilePath == "" {
+			return nil, errorx.NewErrBadRequest("System prompt file is not set, update from file is not allowed")
+		}
+		if prompt.AutoUpdate != *autoUpdate {
+			prompt.AutoUpdate = *autoUpdate
+			fields = append(fields, &prompt.AutoUpdate)
+		}
+	}
+
+	// Only save fields that were provided in the request
 	if name != nil {
 		prompt.Name = *name
 		fields = append(fields, &prompt.Name)
@@ -357,6 +478,7 @@ func DetachAllSystemPromptsFromThread(ctx context.Context, threadID uuid.UUID) e
 }
 
 // GetSystemPromptsForThread retrieves all system prompts attached to a thread
+// and all global system prompts with is_default=true
 func GetSystemPromptsForThread(ctx context.Context, threadID uuid.UUID) ([]*SystemPrompt, errorx.Error) {
 	// Verify the thread exists and belongs to the user (without loading system prompts to avoid recursion)
 	query, errx := orm.GetBaseQueryTUU(&ChatThread{}, nil)
@@ -370,6 +492,8 @@ func GetSystemPromptsForThread(ctx context.Context, threadID uuid.UUID) ([]*Syst
 		return nil, errorx.NewErrNotFound(fmt.Sprintf("Chat thread '%s' not found", threadID.String()))
 	}
 
+	// Get attached system prompt IDs
+	var promptIDs []uuid.UUID
 	relationQuery, errx := orm.GetBaseQueryTUU(&ChatThreadSystemPrompt{}, nil)
 	if errx != nil {
 		return nil, errx
@@ -377,20 +501,16 @@ func GetSystemPromptsForThread(ctx context.Context, threadID uuid.UUID) ([]*Syst
 
 	var relationships []ChatThreadSystemPrompt
 	err = relationQuery.Where(
-		"thread_id = ?",
+		"thread_id = ? AND is_deleted = ?",
 		threadID,
+		false,
 	).Find(&relationships).Error
 
 	if err != nil {
 		return nil, errorx.NewErrInternalServerError("Failed to get system prompts for thread: " + err.Error())
 	}
 
-	if len(relationships) == 0 {
-		return []*SystemPrompt{}, nil
-	}
-
-	// Get the system prompt IDs
-	var promptIDs []uuid.UUID
+	// Get the system prompt IDs from relationships
 	for _, rel := range relationships {
 		promptIDs = append(promptIDs, rel.SystemPromptID)
 	}
@@ -401,11 +521,21 @@ func GetSystemPromptsForThread(ctx context.Context, threadID uuid.UUID) ([]*Syst
 		return nil, errx
 	}
 
+	var whereClause string
+	var queryParams []interface{}
+
+	if len(promptIDs) > 0 {
+		// Get both attached prompts and default prompts
+		whereClause = "((id IN ?) OR (is_default = ? AND tenant_id = ? AND user_id = ?)) AND is_deleted = ?"
+		queryParams = []interface{}{promptIDs, true, auth.GetTenantID(), auth.GetUserID(), false}
+	} else {
+		// Get only default prompts when no prompts are attached
+		whereClause = "is_default = ? AND tenant_id = ? AND user_id = ? AND is_deleted = ?"
+		queryParams = []interface{}{true, auth.GetTenantID(), auth.GetUserID(), false}
+	}
+
 	var prompts []*SystemPrompt
-	err = promptQuery.Where(
-		"id IN ?",
-		promptIDs,
-	).Find(&prompts).Error
+	err = promptQuery.Where(whereClause, queryParams...).Find(&prompts).Error
 
 	if err != nil {
 		return nil, errorx.NewErrInternalServerError("Failed to get system prompts: " + err.Error())
@@ -464,4 +594,21 @@ func GetThreadsForSystemPrompt(ctx context.Context, systemPromptID uuid.UUID) ([
 	}
 
 	return threads, nil
+}
+
+func systemPromptsToChatMessage(systemPrompts []*SystemPrompt) *ChatMessage {
+	var systemContents []string
+
+	if len(systemPrompts) == 0 {
+		return nil
+	}
+
+	for _, systemPrompt := range systemPrompts {
+		systemContents = append(systemContents, systemPrompt.GetContent())
+	}
+	msg := ChatMessage{
+		Role:    ChatMessageRoleNameSystem,
+		Content: strings.Join(systemContents, "\n\n"),
+	}
+	return &msg
 }

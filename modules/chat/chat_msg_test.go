@@ -127,17 +127,17 @@ func TestListMessages(t *testing.T) {
 	}
 
 	// Test default paging
-	messages, errx := ListMessages(ctx, thread.ID, &api.PageAPIRequest{})
+	messages, errx := listMessages(ctx, thread.ID, &api.PageAPIRequest{})
 	assert.Nil(t, errx, "ListMessages should not return an error")
 	assert.Equal(t, 5, len(messages), "Should return all 5 messages")
 
 	// Test with paging
-	messages, errx = ListMessages(ctx, thread.ID, &api.PageAPIRequest{PageSize: 2, PageNumber: 1})
+	messages, errx = listMessages(ctx, thread.ID, &api.PageAPIRequest{PageSize: 2, PageNumber: 1})
 	assert.Nil(t, errx, "ListMessages should not return an error")
 	assert.Equal(t, 2, len(messages), "Should return 2 messages")
 
 	// Test with invalid thread ID
-	messages, errx = ListMessages(ctx, uuid.New(), &api.PageAPIRequest{})
+	messages, errx = listMessages(ctx, uuid.New(), &api.PageAPIRequest{})
 	assert.NotNil(t, errx, "ListMessages should return an error for invalid thread ID")
 	assert.Nil(t, messages)
 }

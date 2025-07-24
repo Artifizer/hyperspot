@@ -11,16 +11,22 @@ import (
 
 // SystemPromptCreateAPIRequest represents a request to create a system prompt
 type SystemPromptCreateAPIRequest struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	UIMeta  string `json:"ui_meta,omitempty"`
+	Name       string `json:"name"`
+	Content    string `json:"content"`
+	UIMeta     string `json:"ui_meta,omitempty"`
+	IsDefault  bool   `json:"is_default,omitempty"`
+	FilePath   string `json:"file_path,omitempty"`
+	AutoUpdate bool   `json:"auto_update,omitempty"` // If true, the content will be updated from the file on every chat message
 }
 
 // SystemPromptAPIRequest represents a request to update a system prompt
 type SystemPromptUpdateAPIRequest struct {
-	Name    *string `json:"name,omitempty"`
-	Content *string `json:"content,omitempty"`
-	UIMeta  *string `json:"ui_meta,omitempty"`
+	Name       *string `json:"name,omitempty"`
+	Content    *string `json:"content,omitempty"`
+	UIMeta     *string `json:"ui_meta,omitempty"`
+	IsDefault  *bool   `json:"is_default,omitempty"`
+	FilePath   *string `json:"file_path,omitempty"`
+	AutoUpdate *bool   `json:"auto_update,omitempty"` // If true, the content will be updated from the file on every chat message
 }
 
 // SystemPromptAPIResponse represents a response containing a system prompt
@@ -115,11 +121,19 @@ func registerSystemPromptAPIRoutes(humaApi huma.API) {
 			return nil, huma.Error400BadRequest("Name is required")
 		}
 
-		if input.Body.Content == "" {
-			return nil, huma.Error400BadRequest("Content is required")
+		if input.Body.Content == "" && input.Body.FilePath == "" {
+			return nil, huma.Error400BadRequest("Content or file path is required")
 		}
 
-		prompt, errx := CreateSystemPrompt(ctx, input.Body.Name, input.Body.Content, input.Body.UIMeta)
+		prompt, errx := CreateSystemPrompt(
+			ctx,
+			input.Body.Name,
+			input.Body.Content,
+			input.Body.UIMeta,
+			input.Body.IsDefault,
+			input.Body.FilePath,
+			input.Body.AutoUpdate,
+		)
 		if errx != nil {
 			return nil, errx.HumaError()
 		}
@@ -144,11 +158,20 @@ func registerSystemPromptAPIRoutes(humaApi huma.API) {
 			return nil, huma.Error400BadRequest("Invalid system prompt ID format")
 		}
 
-		if input.Body.Name == nil && input.Body.Content == nil {
-			return nil, huma.Error400BadRequest("Either 'name' or 'content' field must be provided")
+		if input.Body.Name == nil && input.Body.Content == nil && input.Body.IsDefault == nil && input.Body.FilePath == nil && input.Body.AutoUpdate == nil {
+			return nil, huma.Error400BadRequest("At least one field: 'name', 'content', 'is_default', 'file_path' or 'auto_update' must be provided")
 		}
 
-		prompt, errx := UpdateSystemPrompt(ctx, promptID, input.Body.Name, input.Body.Content, input.Body.UIMeta)
+		prompt, errx := UpdateSystemPrompt(
+			ctx,
+			promptID,
+			input.Body.Name,
+			input.Body.Content,
+			input.Body.UIMeta,
+			input.Body.IsDefault,
+			input.Body.FilePath,
+			input.Body.AutoUpdate,
+		)
 		if errx != nil {
 			return nil, errx.HumaError()
 		}
