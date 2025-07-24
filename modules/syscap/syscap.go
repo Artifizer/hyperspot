@@ -78,22 +78,6 @@ func NewSysCapKey(category SysCapCategory, name SysCapName) SysCapKey {
 	return SysCapKey(fmt.Sprintf("%s:%s", string(category), string(name)))
 }
 
-// ParseSysCapKey parses a capability key into category and name
-func ParseSysCapKey(key SysCapKey) (SysCapCategory, SysCapName, error) {
-	keyStr := string(key)
-	for i, char := range keyStr {
-		if char == ':' {
-			if i == 0 || i == len(keyStr)-1 {
-				return "", "", fmt.Errorf("invalid capability key format: %s", keyStr)
-			}
-			category := SysCapCategory(keyStr[:i])
-			name := SysCapName(keyStr[i+1:])
-			return category, name, nil
-		}
-	}
-	return "", "", fmt.Errorf("invalid capability key format, missing ':': %s", keyStr)
-}
-
 // sysCapRegistry holds all registered capability detectors
 var sysCapRegistry = make(map[SysCapKey]*SysCap)
 var sysCapMutex = sync.RWMutex{}
@@ -112,11 +96,25 @@ func RegisterSysCap(capability *SysCap) {
 	logging.Debug("Registered capability: %s (display: %s)", string(capability.Key), capability.DisplayName)
 }
 
+func UnregisterSysCap(capability *SysCap) {
+	sysCapMutex.Lock()
+	defer sysCapMutex.Unlock()
+
+	sysCapRegistry[capability.Key] = nil
+	logging.Debug("Unregistered capability: %s (display: %s)", string(capability.Key), capability.DisplayName)
+}
+
 func (c *SysCap) IsCacheValid() bool {
+	sysCapMutex.RLock()
+	defer sysCapMutex.RUnlock()
+
 	return time.Now().UnixMilli()-c.CachedAtMs < int64(c.CacheTTLMsec)
 }
 
 func (c *SysCap) IsPresent() bool {
+	sysCapMutex.RLock()
+	defer sysCapMutex.RUnlock()
+
 	if !c.IsCacheValid() && c.Detector != nil {
 		if c.Detector(c) != nil {
 			return false
@@ -132,7 +130,7 @@ func GetSysCap(key SysCapKey) (*SysCap, error) {
 	// Get detector
 	sysCapMutex.RLock()
 	c, exists := sysCapRegistry[key]
-	sysCapMutex.RUnlock()
+	defer sysCapMutex.RUnlock()
 
 	if !exists {
 		return nil, &SysCapNotFoundError{Key: string(key)}
@@ -278,6 +276,12 @@ func (c *SysCap) SetAmount(amount float64, dimension SysCapAmountDimension) *Sys
 func (c *SysCap) SetDetails(details string) *SysCap {
 	c.Details = &details
 	return c
+}
+
+// SysCapIsPresent checks if a capability is present
+func SysCapIsPresent(category SysCapCategory, name SysCapName) bool {
+	sysCap, _ := GetSysCap(NewSysCapKey(category, name))
+	return sysCap != nil && sysCap.IsPresent()
 }
 
 // InitModule initializes the capabilities module

@@ -7,23 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewSysCapKeyAndParse(t *testing.T) {
-	key := NewSysCapKey(CategoryHardware, "gpu")
-	assert.Equal(t, SysCapKey("hardware:gpu"), key)
-
-	cat, name, err := ParseSysCapKey(key)
-	assert.NoError(t, err)
-	assert.Equal(t, CategoryHardware, cat)
-	assert.Equal(t, SysCapName("gpu"), name)
-
-	_, _, err = ParseSysCapKey("")
-	assert.Error(t, err)
-	_, _, err = ParseSysCapKey("hardwaregpu")
-	assert.Error(t, err)
-	_, _, err = ParseSysCapKey(":gpu")
-	assert.Error(t, err)
-}
-
 func TestSysCapSetters(t *testing.T) {
 	c := NewSysCap(CategorySoftware, "python", "Python", false, 0)
 	assert.False(t, c.Present)
