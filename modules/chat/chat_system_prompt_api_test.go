@@ -30,7 +30,8 @@ func TestSystemPromptAPIResponse(t *testing.T) {
 	setupTestDB(t)
 
 	// Create a system prompt
-	prompt := createTestSystemPrompt(t, "Test Prompt", "Test content")
+	prompt, errx := createTestSystemPrompt(t, "Test Prompt", "Test content", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 
 	response := SystemPromptAPIResponse{
 		Body: prompt,
@@ -47,8 +48,10 @@ func TestSystemPromptAPIResponseList(t *testing.T) {
 	setupTestDB(t)
 
 	// Create multiple system prompts
-	prompt1 := createTestSystemPrompt(t, "Prompt 1", "Content 1")
-	prompt2 := createTestSystemPrompt(t, "Prompt 2", "Content 2")
+	prompt1, errx := createTestSystemPrompt(t, "Prompt 1", "Content 1", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
+	prompt2, errx := createTestSystemPrompt(t, "Prompt 2", "Content 2", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 
 	prompts := []*SystemPrompt{prompt1, prompt2}
 
@@ -91,7 +94,7 @@ func TestCreateSystemPromptAPI(t *testing.T) {
 	}
 
 	// Simulate the API logic
-	prompt, errx := CreateSystemPrompt(ctx, request.Name, request.Content, "")
+	prompt, errx := CreateSystemPrompt(ctx, request.Name, request.Content, "", false, "", false)
 	require.Nil(t, errx, "CreateSystemPrompt should not return an error")
 	assert.NotNil(t, prompt)
 	assert.Equal(t, request.Name, prompt.Name)
@@ -104,7 +107,7 @@ func TestCreateSystemPromptAPI(t *testing.T) {
 	}
 
 	// This would be caught by API validation, but let's test the underlying function
-	_, errx = CreateSystemPrompt(ctx, emptyNameRequest.Name, emptyNameRequest.Content, "")
+	_, errx = CreateSystemPrompt(ctx, emptyNameRequest.Name, emptyNameRequest.Content, "", false, "", false)
 	// The underlying function doesn't validate empty names, that's done at API level
 	assert.Nil(t, errx, "CreateSystemPrompt allows empty names (validation is at API level)")
 
@@ -114,7 +117,7 @@ func TestCreateSystemPromptAPI(t *testing.T) {
 		Content: "",
 	}
 
-	_, errx = UpdateSystemPrompt(ctx, prompt.ID, &emptyContentRequest.Name, &emptyContentRequest.Content, nil)
+	_, errx = UpdateSystemPrompt(ctx, prompt.ID, &emptyContentRequest.Name, &emptyContentRequest.Content, nil, nil, nil, nil)
 	assert.Nil(t, errx, "CreateSystemPrompt allows empty content (validation is at API level)")
 }
 
@@ -124,7 +127,8 @@ func TestGetSystemPromptAPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt
-	originalPrompt := createTestSystemPrompt(t, "API Get Test", "Content for API get test")
+	originalPrompt, errx := createTestSystemPrompt(t, "API Get Test", "Content for API get test", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 
 	// Test valid ID
 	retrievedPrompt, errx := GetSystemPrompt(ctx, originalPrompt.ID)
@@ -147,11 +151,14 @@ func TestListSystemPromptsAPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Create multiple system prompts with explicit timing
-	prompt1 := createTestSystemPrompt(t, "API List Test 1", "Content 1")
+	prompt1, errx := createTestSystemPrompt(t, "API List Test 1", "Content 1", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
-	prompt2 := createTestSystemPrompt(t, "API List Test 2", "Content 2")
+	prompt2, errx := createTestSystemPrompt(t, "API List Test 2", "Content 2", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
-	prompt3 := createTestSystemPrompt(t, "API List Test 3", "Content 3")
+	prompt3, errx := createTestSystemPrompt(t, "API List Test 3", "Content 3", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 
 	// Test default parameters (simulating API defaults)
 	pageRequest := &api.PageAPIRequest{
@@ -221,7 +228,8 @@ func TestUpdateSystemPromptAPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt
-	originalPrompt := createTestSystemPrompt(t, "Original API Name", "Original API content")
+	originalPrompt, errx := createTestSystemPrompt(t, "Original API Name", "Original API content", false)
+	require.Nil(t, errx, "Failed to create test system prompt")
 
 	// Test valid update
 	updateRequest := SystemPromptCreateAPIRequest{
@@ -229,7 +237,7 @@ func TestUpdateSystemPromptAPI(t *testing.T) {
 		Content: "Updated API content",
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, &updateRequest.Name, &updateRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, &updateRequest.Name, &updateRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error")
 	assert.NotNil(t, updatedPrompt)
 	assert.Equal(t, originalPrompt.ID, updatedPrompt.ID)
@@ -240,7 +248,7 @@ func TestUpdateSystemPromptAPI(t *testing.T) {
 	invalidID := uuid.New()
 	newName := "New Name"
 	newContent := "New Content"
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, invalidID, &newName, &newContent, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, invalidID, &newName, &newContent, nil, nil, nil, nil)
 	assert.NotNil(t, errx, "UpdateSystemPrompt should return error for invalid ID")
 	assert.Nil(t, updatedPrompt)
 
@@ -251,7 +259,7 @@ func TestUpdateSystemPromptAPI(t *testing.T) {
 		Content: "",
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, &emptyRequest.Name, &emptyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, &emptyRequest.Name, &emptyRequest.Content, nil, nil, nil, nil)
 	assert.Nil(t, errx, "UpdateSystemPrompt allows empty values (validation is at API level)")
 }
 
@@ -261,7 +269,7 @@ func TestDeleteSystemPromptAPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt
-	prompt := createTestSystemPrompt(t, "API Delete Test", "Content to be deleted")
+	prompt, _ := createTestSystemPrompt(t, "API Delete Test", "Content to be deleted", false)
 
 	// Test valid deletion
 	errx := DeleteSystemPrompt(ctx, prompt.ID)
@@ -285,8 +293,8 @@ func TestBulkAttachSystemPromptsAPI(t *testing.T) {
 
 	// Create thread and system prompts
 	thread := createTestThread(t)
-	prompt1 := createTestSystemPrompt(t, "Bulk Attach 1", "Content 1")
-	prompt2 := createTestSystemPrompt(t, "Bulk Attach 2", "Content 2")
+	prompt1, _ := createTestSystemPrompt(t, "Bulk Attach 1", "Content 1", false)
+	prompt2, _ := createTestSystemPrompt(t, "Bulk Attach 2", "Content 2", false)
 
 	// Test valid bulk attach request
 	bulkRequest := ThreadSystemPromptBulkRequest{
@@ -346,9 +354,9 @@ func TestBulkDetachSystemPromptsAPI(t *testing.T) {
 
 	// Create thread and system prompts
 	thread := createTestThread(t)
-	prompt1 := createTestSystemPrompt(t, "Bulk Detach 1", "Content 1")
-	prompt2 := createTestSystemPrompt(t, "Bulk Detach 2", "Content 2")
-	prompt3 := createTestSystemPrompt(t, "Bulk Detach 3", "Content 3")
+	prompt1, _ := createTestSystemPrompt(t, "Bulk Detach 1", "Content 1", false)
+	prompt2, _ := createTestSystemPrompt(t, "Bulk Detach 2", "Content 2", false)
+	prompt3, _ := createTestSystemPrompt(t, "Bulk Detach 3", "Content 3", false)
 
 	// Attach all prompts first
 	promptIDs := []uuid.UUID{prompt1.ID, prompt2.ID, prompt3.ID}
@@ -391,8 +399,8 @@ func TestDetachAllSystemPromptsAPI(t *testing.T) {
 
 	// Create thread and system prompts
 	thread := createTestThread(t)
-	prompt1 := createTestSystemPrompt(t, "Detach All 1", "Content 1")
-	prompt2 := createTestSystemPrompt(t, "Detach All 2", "Content 2")
+	prompt1, _ := createTestSystemPrompt(t, "Detach All 1", "Content 1", false)
+	prompt2, _ := createTestSystemPrompt(t, "Detach All 2", "Content 2", false)
 
 	// Attach prompts first
 	promptIDs := []uuid.UUID{prompt1.ID, prompt2.ID}
@@ -437,8 +445,8 @@ func TestGetThreadSystemPromptsAPI(t *testing.T) {
 
 	// Create thread and system prompts
 	thread := createTestThread(t)
-	prompt1 := createTestSystemPrompt(t, "Thread Prompt 1", "Content 1")
-	prompt2 := createTestSystemPrompt(t, "Thread Prompt 2", "Content 2")
+	prompt1, _ := createTestSystemPrompt(t, "Thread Prompt 1", "Content 1", false)
+	prompt2, _ := createTestSystemPrompt(t, "Thread Prompt 2", "Content 2", false)
 
 	// Test with no attached prompts
 	prompts, errx := GetSystemPromptsForThread(ctx, thread.ID)
@@ -475,7 +483,7 @@ func TestGetSystemPromptThreadsAPI(t *testing.T) {
 	// Create threads and system prompt
 	thread1 := createTestThread(t)
 	thread2 := createTestThread(t)
-	prompt := createTestSystemPrompt(t, "Prompt with Threads", "Content")
+	prompt, _ := createTestSystemPrompt(t, "Prompt with Threads", "Content", false)
 
 	// Test with no attached threads
 	threads, errx := GetThreadsForSystemPrompt(ctx, prompt.ID)
@@ -519,7 +527,7 @@ func TestSystemPromptAPIWithMockedDependencies(t *testing.T) {
 		Content: "You are a helpful assistant for mocked API testing.",
 	}
 
-	prompt, errx := CreateSystemPrompt(ctx, request.Name, request.Content, "")
+	prompt, errx := CreateSystemPrompt(ctx, request.Name, request.Content, "", false, "", false)
 	require.Nil(t, errx, "CreateSystemPrompt should work with mocked dependencies")
 	assert.NotNil(t, prompt)
 	assert.Equal(t, request.Name, prompt.Name)
@@ -549,7 +557,7 @@ func TestSystemPromptAPIWithMockedDependencies(t *testing.T) {
 		Content: "Updated content for mocked API testing.",
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, prompt.ID, &updateRequest.Name, &updateRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, prompt.ID, &updateRequest.Name, &updateRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should work with mocked dependencies")
 	assert.Equal(t, updateRequest.Name, updatedPrompt.Name)
 	assert.Equal(t, updateRequest.Content, updatedPrompt.Content)
@@ -570,7 +578,7 @@ func TestPartialUpdateSystemPromptAPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt to update
-	originalPrompt := createTestSystemPrompt(t, "Original Name", "Original content")
+	originalPrompt, _ := createTestSystemPrompt(t, "Original Name", "Original content", false)
 
 	// Test updating only the name
 	nameValue := "Updated Name Only"
@@ -579,7 +587,7 @@ func TestPartialUpdateSystemPromptAPI(t *testing.T) {
 		Content: nil,
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error for name-only update")
 	assert.NotNil(t, updatedPrompt)
 	assert.Equal(t, originalPrompt.ID, updatedPrompt.ID)
@@ -593,7 +601,7 @@ func TestPartialUpdateSystemPromptAPI(t *testing.T) {
 		Content: &contentValue,
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error for content-only update")
 	assert.NotNil(t, updatedPrompt)
 	assert.Equal(t, originalPrompt.ID, updatedPrompt.ID)
@@ -608,7 +616,7 @@ func TestPartialUpdateSystemPromptAPI(t *testing.T) {
 		Content: &finalContentValue,
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, bothFieldsRequest.Name, bothFieldsRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, bothFieldsRequest.Name, bothFieldsRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error for full update")
 	assert.NotNil(t, updatedPrompt)
 	assert.Equal(t, originalPrompt.ID, updatedPrompt.ID)
@@ -626,7 +634,7 @@ func TestPartialUpdateSystemPromptAPI(t *testing.T) {
 	beforeUpdate, errx := GetSystemPrompt(ctx, originalPrompt.ID)
 	require.Nil(t, errx, "Should be able to get prompt before empty update")
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, emptyRequest.Name, emptyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, emptyRequest.Name, emptyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt allows empty values (validation is at API level)")
 	assert.NotNil(t, updatedPrompt)
 	assert.Equal(t, beforeUpdate.Name, updatedPrompt.Name, "Name should remain unchanged with empty update")
@@ -792,7 +800,7 @@ func TestPartialUpdateSystemPromptAPIWithInvalidID(t *testing.T) {
 		Content: nil,
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, nonExistentID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, nonExistentID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil, nil, nil, nil)
 	assert.NotNil(t, errx, "UpdateSystemPrompt should return error for non-existent ID")
 	assert.Nil(t, updatedPrompt)
 
@@ -803,7 +811,7 @@ func TestPartialUpdateSystemPromptAPIWithInvalidID(t *testing.T) {
 		Content: &contentValue,
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, nonExistentID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, nonExistentID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil, nil, nil, nil)
 	assert.NotNil(t, errx, "UpdateSystemPrompt should return error for non-existent ID")
 	assert.Nil(t, updatedPrompt)
 }
@@ -814,7 +822,7 @@ func TestPartialUpdateSystemPromptAPITimestamps(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt
-	originalPrompt := createTestSystemPrompt(t, "Original Name", "Original content")
+	originalPrompt, _ := createTestSystemPrompt(t, "Original Name", "Original content", false)
 	originalUpdatedAt := originalPrompt.UpdatedAtMs
 
 	// Wait a bit to ensure timestamp difference
@@ -827,7 +835,7 @@ func TestPartialUpdateSystemPromptAPITimestamps(t *testing.T) {
 		Content: nil,
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error")
 	assert.Greater(t, updatedPrompt.UpdatedAtMs, originalUpdatedAt, "UpdatedAtMs should be updated after name change")
 	assert.Equal(t, originalPrompt.CreatedAtMs, updatedPrompt.CreatedAtMs, "CreatedAtMs should remain unchanged")
@@ -842,7 +850,7 @@ func TestPartialUpdateSystemPromptAPITimestamps(t *testing.T) {
 		Content: &contentValue,
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error")
 	assert.Greater(t, updatedPrompt.UpdatedAtMs, previousUpdatedAt, "UpdatedAtMs should be updated after content change")
 	assert.Equal(t, originalPrompt.CreatedAtMs, updatedPrompt.CreatedAtMs, "CreatedAtMs should remain unchanged")
@@ -857,7 +865,7 @@ func TestPartialUpdateSystemPromptAPIWithMockedDependencies(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a system prompt
-	originalPrompt := createTestSystemPrompt(t, "Original Name", "Original content")
+	originalPrompt, _ := createTestSystemPrompt(t, "Original Name", "Original content", false)
 
 	// Test name-only update with mocked dependencies
 	nameValue := "Mocked Name Update"
@@ -866,7 +874,7 @@ func TestPartialUpdateSystemPromptAPIWithMockedDependencies(t *testing.T) {
 		Content: nil,
 	}
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, originalPrompt.ID, nameOnlyRequest.Name, nameOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should work with mocked dependencies")
 	assert.Equal(t, nameValue, updatedPrompt.Name, "Name should be updated")
 	assert.Equal(t, "Original content", updatedPrompt.Content, "Content should remain unchanged")
@@ -878,7 +886,7 @@ func TestPartialUpdateSystemPromptAPIWithMockedDependencies(t *testing.T) {
 		Content: &contentValue,
 	}
 
-	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil)
+	updatedPrompt, errx = UpdateSystemPrompt(ctx, originalPrompt.ID, contentOnlyRequest.Name, contentOnlyRequest.Content, nil, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should work with mocked dependencies")
 	assert.Equal(t, "Mocked Name Update", updatedPrompt.Name, "Name should remain from previous update")
 	assert.Equal(t, contentValue, updatedPrompt.Content, "Content should be updated")
@@ -894,7 +902,7 @@ func TestSystemPromptUIMeta(t *testing.T) {
 	promptContent := "This is a test prompt without UI metadata"
 
 	// Create the prompt without ui_meta
-	prompt, errx := CreateSystemPrompt(ctx, promptName, promptContent, "")
+	prompt, errx := CreateSystemPrompt(ctx, promptName, promptContent, "", false, "", false)
 	require.Nil(t, errx, "CreateSystemPrompt should not return an error")
 	assert.NotNil(t, prompt)
 	assert.Equal(t, promptName, prompt.Name)
@@ -910,7 +918,7 @@ func TestSystemPromptUIMeta(t *testing.T) {
 	uiMetaValue := `{"theme":"dark","icon":"assistant","priority":1}`
 	uiMetaPtr := uiMetaValue
 
-	updatedPrompt, errx := UpdateSystemPrompt(ctx, prompt.ID, nil, nil, &uiMetaPtr)
+	updatedPrompt, errx := UpdateSystemPrompt(ctx, prompt.ID, nil, nil, &uiMetaPtr, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error")
 	assert.Equal(t, uiMetaValue, updatedPrompt.UIMeta, "UIMeta should be updated")
 
@@ -924,7 +932,7 @@ func TestSystemPromptUIMeta(t *testing.T) {
 	secondPromptContent := "This is a test prompt with UI metadata"
 	secondUIMeta := `{"theme":"light","icon":"user","priority":2}`
 
-	secondPrompt, errx := CreateSystemPrompt(ctx, secondPromptName, secondPromptContent, secondUIMeta)
+	secondPrompt, errx := CreateSystemPrompt(ctx, secondPromptName, secondPromptContent, secondUIMeta, false, "", false)
 	require.Nil(t, errx, "CreateSystemPrompt should not return an error")
 	assert.NotNil(t, secondPrompt)
 	assert.Equal(t, secondPromptName, secondPrompt.Name)
@@ -938,7 +946,7 @@ func TestSystemPromptUIMeta(t *testing.T) {
 
 	// Test 4: Update with empty ui_meta should clear the field
 	emptyUIMeta := ""
-	updatedSecondPrompt, errx := UpdateSystemPrompt(ctx, secondPrompt.ID, nil, nil, &emptyUIMeta)
+	updatedSecondPrompt, errx := UpdateSystemPrompt(ctx, secondPrompt.ID, nil, nil, &emptyUIMeta, nil, nil, nil)
 	require.Nil(t, errx, "UpdateSystemPrompt should not return an error")
 	assert.Equal(t, "", updatedSecondPrompt.UIMeta, "UIMeta should be cleared when updated with empty string")
 

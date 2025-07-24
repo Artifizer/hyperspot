@@ -97,7 +97,7 @@ func registerChatThreadAPIRoutes(humaApi huma.API) {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
 
-		messages, errx := ListMessages(ctx, input.ThreadID, pageRequest)
+		messages, errx := listMessages(ctx, input.ThreadID, pageRequest)
 		if errx != nil {
 			return nil, errx.HumaError()
 		}

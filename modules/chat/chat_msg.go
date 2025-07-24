@@ -103,11 +103,32 @@ func (m *ChatMessage) DbSaveFields(fields ...interface{}) errorx.Error {
 	return nil
 }
 
-func ListMessages(ctx context.Context, threadID uuid.UUID, pageRequest *api.PageAPIRequest) ([]*ChatMessage, errorx.Error) {
+func listMessages(ctx context.Context, threadID uuid.UUID, pageRequest *api.PageAPIRequest) ([]*ChatMessage, errorx.Error) {
+	var systemPrompts []*SystemPrompt
+	var messages []*ChatMessage
+	var errx errorx.Error
+
+	// 1. Get system prompts for the thread
+
 	chatThread, errx := GetChatThread(ctx, threadID)
 	if errx != nil {
 		return nil, errx
 	}
+
+	if len(chatThread.SystemPrompts) > 0 {
+		systemPrompts = append(systemPrompts, chatThread.SystemPrompts...)
+	}
+
+	// 2. Merge system prompts and convert it to the first chat message
+
+	systemMsg := systemPromptsToChatMessage(systemPrompts)
+	if systemMsg != nil {
+		messages = append(messages, systemMsg)
+	}
+
+	// 3. Get messages for the thread
+
+	var chatMessages []*ChatMessage
 
 	query, errx := orm.GetBaseQuery(&ChatMessage{}, auth.GetTenantID(), auth.GetUserID(), pageRequest)
 	if errx != nil {
@@ -122,13 +143,11 @@ func ListMessages(ctx context.Context, threadID uuid.UUID, pageRequest *api.Page
 		query = query.Order("sequence_id asc")
 	}
 
-	var messages []*ChatMessage
-
-	if err := query.Find(&messages).Error; err != nil {
+	if err := query.Find(&chatMessages).Error; err != nil {
 		return nil, errorx.NewErrInternalServerError("Failed to list messages: " + err.Error())
 	}
 
-	for _, message := range messages {
+	for _, message := range chatMessages {
 		message.ChatThreadPtr = chatThread
 		roleName, ok := ChatMessageRoleNames[message.RoleId]
 		if !ok {
@@ -137,6 +156,7 @@ func ListMessages(ctx context.Context, threadID uuid.UUID, pageRequest *api.Page
 		message.Role = roleName
 	}
 
+	messages = append(messages, chatMessages...)
 	return messages, nil
 }
 
@@ -174,6 +194,8 @@ func shortenMessage(message string, maxLength int) string {
 	return message[:maxLength] + "..."
 }
 
+// PrepareLLMChatRequest creates a new message and prepares the request payload for the LLM API
+// If threadID is uuid.Nil, a new thread will be created with the first message conten
 func PrepareLLMChatRequest(
 	ctx context.Context,
 	groupID uuid.UUID,
@@ -190,31 +212,30 @@ func PrepareLLMChatRequest(
 		debug.PrintStack()
 	}
 
+	if threadID == uuid.Nil {
+		thread, errx := CreateChatThread(ctx, groupID, shortenMessage(content, 128), nil, nil, nil, []uuid.UUID{})
+		if errx != nil {
+			return nil, nil, errx
+		}
+		threadID = thread.ID
+	}
+
 	var limit int = 100 // TODO: limit to 100 last messages, need to be smarter!
 
 	var msgs []*ChatMessage
 	var errx errorx.Error
-	var thread *ChatThread
 
-	if threadID != uuid.Nil {
-		msgs, errx = ListMessages(ctx, threadID, &api.PageAPIRequest{
-			PageNumber: 1,
-			PageSize:   limit,
-		})
+	msgs, errx = listMessages(ctx, threadID, &api.PageAPIRequest{
+		PageNumber: 1,
+		PageSize:   limit,
+	})
 
-		if errx != nil {
-			return nil, nil, errx
-		}
+	if errx != nil {
+		return nil, nil, errx
+	}
 
-		if len(msgs) == limit {
-			return nil, nil, errorx.NewErrBadRequest(fmt.Sprintf("Too many messages in the thread '%s', limit is %d", threadID.String(), limit))
-		}
-
-		// Get the thread to access system prompts
-		thread, errx = GetChatThread(ctx, threadID)
-		if errx != nil {
-			return nil, nil, errx
-		}
+	if len(msgs) == limit {
+		return nil, nil, errorx.NewErrBadRequest(fmt.Sprintf("Too many messages in the thread '%s', limit is %d", threadID.String(), limit))
 	}
 
 	msg, errx := CreateMessage(ctx, groupID, threadID, ChatMessageRoleNameUser, model.Name, maxTokens, temperature, content, true, 0, 0)
@@ -226,21 +247,6 @@ func PrepareLLMChatRequest(
 
 	// Convert chat messages to the format expected by the LLM API
 	var openAIMessages []openapi_client.OpenAICompletionMessage
-
-	// Add system prompts first if we have a thread with system prompts
-	if thread != nil && len(thread.SystemPrompts) > 0 {
-		// Concatenate all system prompts into a single message using "\n\n" as delimiter
-		var systemContents []string
-		for _, systemPrompt := range thread.SystemPrompts {
-			systemContents = append(systemContents, systemPrompt.Content)
-		}
-
-		// Add the combined system message at the beginning
-		openAIMessages = append(openAIMessages, openapi_client.OpenAICompletionMessage{
-			Role:    ChatMessageRoleNameSystem,
-			Content: strings.Join(systemContents, "\n\n"),
-		})
-	}
 
 	// Add the conversation messages
 	for _, msg := range msgs {
@@ -297,6 +303,10 @@ func CreateMessage(
 	sizeTokens int,
 	seconds float32,
 ) (*ChatMessage, errorx.Error) {
+	if threadID == uuid.Nil {
+		return nil, errorx.NewErrBadRequest("Thread ID is required")
+	}
+
 	errx := ValidateMessage(ctx, content, modelName, maxTokens, temperature)
 	if errx != nil {
 		return nil, errx
@@ -318,20 +328,12 @@ func CreateMessage(
 
 	var thread *ChatThread
 
-	if threadID == uuid.Nil {
-		thread, errx = CreateChatThread(ctx, groupID, shortenMessage(content, 128), nil, nil, nil, []uuid.UUID{})
-		if errx != nil {
-			return nil, errx
-		}
-		threadID = thread.ID
-	} else {
-		thread, errx = GetChatThread(ctx, threadID)
-		if errx != nil {
-			return nil, errx
-		}
-		if groupID != uuid.Nil && groupID != thread.GroupID {
-			return nil, errorx.NewErrBadRequest(fmt.Sprintf("Group ID '%s' does not match thread group ID '%s'", groupID.String(), thread.GroupID.String()))
-		}
+	thread, errx = GetChatThread(ctx, threadID)
+	if errx != nil {
+		return nil, errx
+	}
+	if groupID != uuid.Nil && groupID != thread.GroupID {
+		return nil, errorx.NewErrBadRequest(fmt.Sprintf("Group ID '%s' does not match thread group ID '%s'", groupID.String(), thread.GroupID.String()))
 	}
 
 	if maxTokens == 0 {

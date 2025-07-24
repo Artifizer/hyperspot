@@ -110,6 +110,10 @@ func ListChatThreads(ctx context.Context, groupID uuid.UUID, pageRequest *api.Pa
 }
 
 func GetChatThread(ctx context.Context, threadID uuid.UUID) (*ChatThread, errorx.Error) {
+	if threadID == uuid.Nil {
+		return nil, errorx.NewErrNotFound("Chat thread not found")
+	}
+
 	query, errx := orm.GetBaseQuery(&ChatThread{}, auth.GetTenantID(), auth.GetUserID(), nil)
 	if errx != nil {
 		return nil, errx

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
@@ -125,12 +124,8 @@ func getSysCapsCommands() *cli.Command {
 			},
 			{
 				Name:  "get",
-				Usage: "Get a specific capability by key (category:name) or by category and name",
+				Usage: "Get a specific capability by category and name",
 				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:  "key",
-						Usage: "Capability key in format 'category:name' (e.g., 'hardware:GPU')",
-					},
 					&cli.StringFlag{
 						Name:  "category",
 						Usage: "Capability category (hardware, software, os, llm_service, module)",
@@ -144,24 +139,13 @@ func getSysCapsCommands() *cli.Command {
 					client := NewClient(c.String("base-url"), c.Int("port"), c.Int("timeout"))
 
 					var path string
-					key := c.String("key")
 					category := c.String("category")
 					name := c.String("name")
 
-					if key != "" {
-						// Validate key format
-						if !strings.Contains(key, ":") {
-							return fmt.Errorf("invalid key format. Expected 'category:name', got: %s", key)
-						}
-						path = fmt.Sprintf("/syscaps/%s", key)
-					} else if category != "" && name != "" {
-						// Validate category
-						if category != "hardware" && category != "software" && category != "os" && category != "llm_service" && category != "module" {
-							return fmt.Errorf("invalid category. Must be one of: hardware, software, os, llm_service, module")
-						}
+					if category != "" && name != "" {
 						path = fmt.Sprintf("/syscaps/%s/%s", category, name)
 					} else {
-						return fmt.Errorf("must specify either --key or both --category and --name")
+						return fmt.Errorf("must specify both --category and --name")
 					}
 
 					resp, err := client.doRequest("GET", path, nil)

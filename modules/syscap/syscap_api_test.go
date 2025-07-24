@@ -22,10 +22,10 @@ func registerTestSysCaps() {
 func TestListAllSysCapsAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly
 	resp, err := api.ListAllSysCaps(context.Background(), &struct{}{})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -35,12 +35,12 @@ func TestListAllSysCapsAPI(t *testing.T) {
 func TestListSysCapsByCategoryAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly with valid category
 	resp, err := api.ListSysCapsByCategory(context.Background(), &ListSysCapsByCategoryInput{
 		Category: string(CategorySoftware),
 	})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -53,7 +53,7 @@ func TestListSysCapsByCategoryAPI(t *testing.T) {
 	_, err = api.ListSysCapsByCategory(context.Background(), &ListSysCapsByCategoryInput{
 		Category: "invalidcat",
 	})
-	
+
 	// Assert that we get an error
 	assert.Error(t, err)
 	// The error is wrapped by Huma, so we can't directly type assert
@@ -63,13 +63,13 @@ func TestListSysCapsByCategoryAPI(t *testing.T) {
 func TestGetSysCapByTypeAndNameAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly with valid category and name
 	resp, err := api.GetSysCapByTypeAndName(context.Background(), &GetSysCapByTypeAndNameInput{
 		Category: string(CategoryHardware),
 		Name:     "gpu",
 	})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -80,7 +80,7 @@ func TestGetSysCapByTypeAndNameAPI(t *testing.T) {
 		Category: string(CategoryHardware),
 		Name:     "doesnotexist",
 	})
-	
+
 	// Assert that we get a 404 error
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
@@ -90,7 +90,7 @@ func TestGetSysCapByTypeAndNameAPI(t *testing.T) {
 		Category: "invalidcat",
 		Name:     "gpu",
 	})
-	
+
 	// Assert that we get an error
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid category")
@@ -99,31 +99,33 @@ func TestGetSysCapByTypeAndNameAPI(t *testing.T) {
 func TestGetSysCapByKeyAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly with valid key
-	resp, err := api.GetSysCapByKey(context.Background(), &GetSysCapByKeyInput{
-		Key: "hardware:gpu",
+	resp, err := api.GetSysCapByTypeAndName(context.Background(), &GetSysCapByTypeAndNameInput{
+		Category: string(CategoryHardware),
+		Name:     "gpu",
 	})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, "gpu", string(resp.Body.Name))
 
 	// Test with invalid key format
-	_, err = api.GetSysCapByKey(context.Background(), &GetSysCapByKeyInput{
-		Key: "gpu", // Missing category
+	_, err = api.GetSysCapByTypeAndName(context.Background(), &GetSysCapByTypeAndNameInput{
+		Category: "gpu", // Missing category
 	})
-	
+
 	// Assert that we get a 400 error
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Invalid capability key format")
+	assert.Contains(t, err.Error(), "Invalid category")
 
 	// Test with non-existent capability
-	_, err = api.GetSysCapByKey(context.Background(), &GetSysCapByKeyInput{
-		Key: "hardware:doesnotexist",
+	_, err = api.GetSysCapByTypeAndName(context.Background(), &GetSysCapByTypeAndNameInput{
+		Category: string(CategoryHardware),
+		Name:     "doesnotexist",
 	})
-	
+
 	// Assert that we get a 404 error
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
@@ -132,10 +134,10 @@ func TestGetSysCapByKeyAPI(t *testing.T) {
 func TestRefreshAllSysCapsAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly
 	resp, err := api.RefreshAllSysCaps(context.Background(), &struct{}{})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -145,16 +147,16 @@ func TestRefreshAllSysCapsAPI(t *testing.T) {
 func TestRefreshSysCapsByCategoryAPI(t *testing.T) {
 	registerTestSysCaps()
 	api := setupTestAPI()
-	
+
 	// Call the handler directly with valid category
 	resp, err := api.RefreshSysCapsByCategory(context.Background(), &ListSysCapsByCategoryInput{
 		Category: string(CategoryHardware),
 	})
-	
+
 	// Assert on the response
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
-	
+
 	found := false
 	for _, c := range resp.Body {
 		if c.Category == CategoryHardware {
@@ -167,7 +169,7 @@ func TestRefreshSysCapsByCategoryAPI(t *testing.T) {
 	_, err = api.RefreshSysCapsByCategory(context.Background(), &ListSysCapsByCategoryInput{
 		Category: "invalidcat",
 	})
-	
+
 	// Assert that we get an error
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid category")
