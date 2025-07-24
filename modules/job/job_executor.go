@@ -118,25 +118,34 @@ func (e *jobsExecutor) getNextJob(queue *JobQueue, workerID int) *JobObj {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 
-	jobID, errx := getFirstWaitingJob(string(queue.config.Name))
+	for {
+		jobID, errx := getFirstWaitingJob(string(queue.config.Name))
 
-	if errx != nil {
-		switch errx.(type) {
-		case *errorx.ErrNotFound:
-			return nil
-		default:
-			logging.Error("failed to get first waiting job: %v", errx)
+		if errx != nil {
+			switch errx.(type) {
+			case *errorx.ErrNotFound:
+				return nil
+			default:
+				logging.Error("failed to get first waiting job: %v", errx)
+				return nil
+			}
+		}
+
+		job, err := e.lockJobByID(jobID, 0)
+		if err != nil {
 			return nil
 		}
-	}
 
-	job, err := e.lockJobByID(jobID, 0)
-	if err != nil {
-		return nil
-	}
+		// Check if the job is still waiting after acquiring the job lock
+		if job.GetStatus() != JobStatusWaiting {
+			e.trace("getNextJob(%s, worker #%d): job %s is not waiting anymore, it's '	%s', so skipping", queue.config.Name, workerID, job.GetJobID(), job.GetStatus())
+			e.unlockJob(job)
+			continue
+		}
 
-	e.trace("getNextJob(%s, worker #%d): got job %s", queue.config.Name, workerID, job.GetJobID())
-	return job
+		e.trace("getNextJob(%s, worker #%d): got job %s", queue.config.Name, workerID, job.GetJobID())
+		return job
+	}
 }
 
 // getQueue selects the correct JobQueue based on the Job's type.
