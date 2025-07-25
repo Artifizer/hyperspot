@@ -36,6 +36,14 @@ type SystemPrompt struct {
 	AutoUpdate   bool      `json:"auto_update" doc:"if true, system prompt needs to be updated on every chat message"`
 }
 
+// systemPromptFilterRequest represents filters for listing system prompts
+type systemPromptFilterRequest struct {
+	IsDefault  *bool   `query:"is_default,omitempty" doc:"Filter by default status (true/false)"`
+	IsFile     *bool   `query:"is_file,omitempty" doc:"Filter by file-based prompts (true) or content-based prompts (false)"`
+	AutoUpdate *bool   `query:"auto_update,omitempty" doc:"Filter by auto-update status (true/false)"`
+	Name       *string `query:"name,omitempty" doc:"Filter by name (partial match, case-insensitive)"`
+}
+
 // ChatThreadSystemPrompt represents the many-to-many relationship between ChatThread and SystemPrompt
 type ChatThreadSystemPrompt struct {
 	SequenceID     int64     `json:"-" gorm:"primaryKey;autoIncrement:true"`
@@ -184,16 +192,58 @@ func GetSystemPrompt(ctx context.Context, promptID uuid.UUID) (*SystemPrompt, er
 }
 
 // ListSystemPrompts retrieves system prompts for the current user with pagination support
-func ListSystemPrompts(ctx context.Context, pageRequest *api.PageAPIRequest) ([]*SystemPrompt, errorx.Error) {
+func ListSystemPrompts(ctx context.Context, pageRequest *api.PageAPIRequest, filter *systemPromptFilterRequest) ([]*SystemPrompt, errorx.Error) {
 	query, errx := orm.GetBaseQueryTUU(&SystemPrompt{}, pageRequest)
 	if errx != nil {
 		return nil, errx
 	}
 
-	if pageRequest != nil && strings.HasPrefix(pageRequest.Order, "-") {
-		query = query.Order("updated_at_ms desc")
+	// Apply filters
+	if filter != nil {
+		// Filter by default status
+		if filter.IsDefault != nil {
+			query = query.Where("is_default = ?", *filter.IsDefault)
+		}
+
+		// Filter by file-based vs content-based
+		if filter.IsFile != nil {
+			if *filter.IsFile {
+				// File-based prompts have a non-empty file_path
+				query = query.Where("file_path != ''")
+			} else {
+				// Content-based prompts have an empty file_path
+				query = query.Where("file_path = '' OR file_path IS NULL")
+			}
+		}
+
+		// Filter by auto-update status
+		if filter.AutoUpdate != nil {
+			query = query.Where("auto_update = ?", *filter.AutoUpdate)
+		}
+
+		// Filter by name (partial match, case-insensitive)
+		if filter.Name != nil && *filter.Name != "" {
+			query = query.Where("LOWER(name) LIKE LOWER(?)", "%"+*filter.Name+"%")
+		}
+	}
+
+	// Apply ordering
+	if pageRequest != nil {
+		switch pageRequest.Order {
+		case "name":
+			query = query.Order("name asc")
+		case "-name":
+			query = query.Order("name desc")
+		case "updated_at":
+			query = query.Order("updated_at_ms asc")
+		case "-updated_at":
+			query = query.Order("updated_at_ms desc")
+		default:
+			// Default to name ascending
+			query = query.Order("name asc")
+		}
 	} else {
-		query = query.Order("updated_at_ms asc")
+		query = query.Order("name asc")
 	}
 
 	var prompts []*SystemPrompt

@@ -19,7 +19,7 @@ type SystemPromptCreateAPIRequest struct {
 	AutoUpdate bool   `json:"auto_update,omitempty"` // If true, the content will be updated from the file on every chat message
 }
 
-// SystemPromptAPIRequest represents a request to update a system prompt
+// SystemPromptUpdateAPIRequest represents a request to update a system prompt
 type SystemPromptUpdateAPIRequest struct {
 	Name       *string `json:"name,omitempty"`
 	Content    *string `json:"content,omitempty"`
@@ -57,9 +57,13 @@ func registerSystemPromptAPIRoutes(humaApi huma.API) {
 		Summary:     "List all system prompts for the current user",
 		Tags:        []string{"System Prompt"},
 	}, func(ctx context.Context, input *struct {
-		PageSize int    `query:"page_size" default:"20"`
-		Page     int    `query:"page" default:"1"`
-		Order    string `query:"order" default:"-updated_at"`
+		PageSize   int    `query:"page_size" default:"20"`
+		Page       int    `query:"page" default:"1"`
+		Order      string `query:"order" default:"name"`
+		IsDefault  string `query:"is_default,omitempty" doc:"Filter by default status (true/false)"`
+		IsFile     string `query:"is_file,omitempty" doc:"Filter by file-based prompts (true) or content-based prompts (false)"`
+		AutoUpdate string `query:"auto_update,omitempty" doc:"Filter by auto-update status (true/false)"`
+		Name       string `query:"name,omitempty" doc:"Filter by name (partial match, case-insensitive)"`
 	}) (*SystemPromptAPIResponseList, error) {
 		resp := &SystemPromptAPIResponseList{}
 
@@ -74,7 +78,40 @@ func registerSystemPromptAPIRoutes(humaApi huma.API) {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
 
-		prompts, errx := ListSystemPrompts(ctx, pageRequest)
+		// Create filter from request
+		filter := &systemPromptFilterRequest{}
+		if input.IsDefault != "" {
+			if input.IsDefault == "true" {
+				filter.IsDefault = &[]bool{true}[0]
+			} else if input.IsDefault == "false" {
+				filter.IsDefault = &[]bool{false}[0]
+			} else {
+				return nil, huma.Error400BadRequest("Invalid value for is_default: " + input.IsDefault)
+			}
+		}
+		if input.IsFile != "" {
+			if input.IsFile == "true" {
+				filter.IsFile = &[]bool{true}[0]
+			} else if input.IsFile == "false" {
+				filter.IsFile = &[]bool{false}[0]
+			} else {
+				return nil, huma.Error400BadRequest("Invalid value for is_file: " + input.IsFile)
+			}
+		}
+		if input.AutoUpdate != "" {
+			if input.AutoUpdate == "true" {
+				filter.AutoUpdate = &[]bool{true}[0]
+			} else if input.AutoUpdate == "false" {
+				filter.AutoUpdate = &[]bool{false}[0]
+			} else {
+				return nil, huma.Error400BadRequest("Invalid value for auto_update: " + input.AutoUpdate)
+			}
+		}
+		if input.Name != "" {
+			filter.Name = &input.Name
+		}
+
+		prompts, errx := ListSystemPrompts(ctx, pageRequest, filter)
 		if errx != nil {
 			return nil, errx.HumaError()
 		}
