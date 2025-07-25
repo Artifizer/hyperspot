@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +169,7 @@ func TestListSystemPromptsAPI(t *testing.T) {
 		Order:      "-updated_at",
 	}
 
-	prompts, errx := ListSystemPrompts(ctx, pageRequest)
+	prompts, errx := ListSystemPrompts(ctx, pageRequest, nil)
 	require.Nil(t, errx, "ListSystemPrompts should not return an error")
 	assert.Equal(t, 3, len(prompts), "Should return all 3 prompts")
 
@@ -178,7 +180,7 @@ func TestListSystemPromptsAPI(t *testing.T) {
 		Order:      "-updated_at",
 	}
 
-	prompts, errx = ListSystemPrompts(ctx, pageRequest)
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, nil)
 	require.Nil(t, errx, "ListSystemPrompts should not return an error")
 	assert.Equal(t, 2, len(prompts), "Should return 2 prompts with pagination")
 
@@ -189,7 +191,7 @@ func TestListSystemPromptsAPI(t *testing.T) {
 		Order:      "updated_at", // Ascending
 	}
 
-	prompts, errx = ListSystemPrompts(ctx, pageRequest)
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, nil)
 	require.Nil(t, errx, "ListSystemPrompts should not return an error")
 	assert.Equal(t, 3, len(prompts), "Should return all prompts")
 	// Verify ascending order by timestamp
@@ -204,7 +206,7 @@ func TestListSystemPromptsAPI(t *testing.T) {
 		Order:      "-updated_at", // Descending
 	}
 
-	prompts, errx = ListSystemPrompts(ctx, pageRequest)
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, nil)
 	require.Nil(t, errx, "ListSystemPrompts should not return an error")
 	assert.Equal(t, 3, len(prompts), "Should return all prompts")
 	// Verify descending order by timestamp
@@ -220,6 +222,175 @@ func TestListSystemPromptsAPI(t *testing.T) {
 	assert.True(t, promptIDs[prompt1.ID], "Prompt 1 should be in results")
 	assert.True(t, promptIDs[prompt2.ID], "Prompt 2 should be in results")
 	assert.True(t, promptIDs[prompt3.ID], "Prompt 3 should be in results")
+}
+
+// TestListSystemPromptsAPIWithFilters verifies system prompt listing with filters through API logic
+func TestListSystemPromptsAPIWithFilters(t *testing.T) {
+	setupTestDB(t)
+	ctx := context.Background()
+
+	// Create test prompts with different characteristics for API testing
+	defaultPrompt, errx := createTestSystemPrompt(t, "API Default Prompt", "Default content", true)
+	require.Nil(t, errx, "Failed to create default prompt")
+
+	regularPrompt, errx := createTestSystemPrompt(t, "API Regular Prompt", "Regular content", false)
+	require.Nil(t, errx, "Failed to create regular prompt")
+
+	// Create file-based prompt
+	filePrompt, errx := createTestSystemPrompt(t, "API File Prompt", "File content", false)
+	require.Nil(t, errx, "Failed to create file prompt")
+	filePrompt.FilePath = "/api/test/file.txt"
+	filePrompt.AutoUpdate = true
+	errx = filePrompt.DbSaveFields(&filePrompt.FilePath, &filePrompt.AutoUpdate)
+	require.Nil(t, errx, "Failed to update file prompt")
+
+	// Test API filter by is_default = true
+	filter := &systemPromptFilterRequest{
+		IsDefault: &[]bool{true}[0],
+	}
+	prompts, errx := ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 default prompt")
+	assert.True(t, prompts[0].IsDefault, "Returned prompt should be default")
+	assert.Equal(t, defaultPrompt.ID, prompts[0].ID, "Should return the correct default prompt")
+
+	// Test API filter by is_file = true
+	filter = &systemPromptFilterRequest{
+		IsFile: &[]bool{true}[0],
+	}
+	prompts, errx = ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 file-based prompt")
+	assert.NotEmpty(t, prompts[0].FilePath, "Returned prompt should have file path")
+	assert.Equal(t, filePrompt.ID, prompts[0].ID, "Should return the correct file prompt")
+
+	// Test API filter by auto_update = true
+	filter = &systemPromptFilterRequest{
+		AutoUpdate: &[]bool{true}[0],
+	}
+	prompts, errx = ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 auto-update prompt")
+	assert.True(t, prompts[0].AutoUpdate, "Returned prompt should have auto-update")
+	assert.Equal(t, filePrompt.ID, prompts[0].ID, "Should return the correct auto-update prompt")
+
+	// Test API filter by name
+	nameFilter := "Regular"
+	filter = &systemPromptFilterRequest{
+		Name: &nameFilter,
+	}
+	prompts, errx = ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 prompt with 'Regular' in name")
+	assert.Contains(t, strings.ToLower(prompts[0].Name), strings.ToLower(nameFilter), "Returned prompt should contain 'Regular' in name")
+	assert.Equal(t, regularPrompt.ID, prompts[0].ID, "Should return the correct regular prompt")
+
+	// Test API filter with multiple filters
+	filter = &systemPromptFilterRequest{
+		IsFile:     &[]bool{true}[0],
+		AutoUpdate: &[]bool{true}[0],
+	}
+	prompts, errx = ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 prompt matching both filters")
+	assert.NotEmpty(t, prompts[0].FilePath, "Returned prompt should have file path")
+	assert.True(t, prompts[0].AutoUpdate, "Returned prompt should have auto-update")
+	assert.Equal(t, filePrompt.ID, prompts[0].ID, "Should return the correct file prompt")
+
+	// Test API filter with no matches
+	nameFilter = "NonExistentAPIPrompt"
+	filter = &systemPromptFilterRequest{
+		Name: &nameFilter,
+	}
+	prompts, errx = ListSystemPrompts(ctx, nil, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 0, len(prompts), "Should return 0 prompts for non-existent name")
+}
+
+// TestListSystemPromptsAPIWithPaginationAndFilters verifies API pagination combined with filters
+func TestListSystemPromptsAPIWithPaginationAndFilters(t *testing.T) {
+	setupTestDB(t)
+	ctx := context.Background()
+
+	// Create multiple prompts for pagination testing
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("API Pagination Test %d", i+1)
+		content := fmt.Sprintf("API test content %d", i+1)
+		_, errx := createTestSystemPrompt(t, name, content, false)
+		require.Nil(t, errx, "Failed to create test prompt")
+		time.Sleep(1 * time.Millisecond) // Ensure different timestamps
+	}
+
+	// Test API pagination with name filter
+	nameFilter := "API Pagination"
+	filter := &systemPromptFilterRequest{
+		Name: &nameFilter,
+	}
+
+	// Test first page
+	pageRequest := &api.PageAPIRequest{
+		PageSize:   2,
+		PageNumber: 1,
+		Order:      "name",
+	}
+	prompts, errx := ListSystemPrompts(ctx, pageRequest, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 2, len(prompts), "Should return 2 prompts on first page")
+
+	// Test second page
+	pageRequest.PageNumber = 2
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 2, len(prompts), "Should return 2 prompts on second page")
+
+	// Test third page
+	pageRequest.PageNumber = 3
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 1, len(prompts), "Should return 1 prompt on third page")
+
+	// Test API ordering with filters
+	pageRequest = &api.PageAPIRequest{Order: "name"}
+	prompts, errx = ListSystemPrompts(ctx, pageRequest, filter)
+	assert.Nil(t, errx, "ListSystemPrompts should not return an error")
+	assert.Equal(t, 5, len(prompts), "Should return all 5 filtered prompts")
+
+	// Verify ordering is applied correctly with filters
+	for i := 1; i < len(prompts); i++ {
+		assert.LessOrEqual(t, prompts[i-1].Name, prompts[i].Name, "Prompts should be ordered by name")
+	}
+}
+
+// TestSystemPromptFilterRequestStructure verifies the filter request structure
+func TestSystemPromptFilterRequestStructure(t *testing.T) {
+	// Test filter request with all fields
+	isDefaultTrue := true
+	isFileTrue := true
+	autoUpdateTrue := true
+	nameFilter := "test"
+
+	filter := &systemPromptFilterRequest{
+		IsDefault:  &isDefaultTrue,
+		IsFile:     &isFileTrue,
+		AutoUpdate: &autoUpdateTrue,
+		Name:       &nameFilter,
+	}
+
+	assert.NotNil(t, filter.IsDefault, "IsDefault should not be nil")
+	assert.True(t, *filter.IsDefault, "IsDefault should be true")
+	assert.NotNil(t, filter.IsFile, "IsFile should not be nil")
+	assert.True(t, *filter.IsFile, "IsFile should be true")
+	assert.NotNil(t, filter.AutoUpdate, "AutoUpdate should not be nil")
+	assert.True(t, *filter.AutoUpdate, "AutoUpdate should be true")
+	assert.NotNil(t, filter.Name, "Name should not be nil")
+	assert.Equal(t, "test", *filter.Name, "Name should be 'test'")
+
+	// Test filter request with nil fields (should be omitted)
+	emptyFilter := &systemPromptFilterRequest{}
+	assert.Nil(t, emptyFilter.IsDefault, "IsDefault should be nil")
+	assert.Nil(t, emptyFilter.IsFile, "IsFile should be nil")
+	assert.Nil(t, emptyFilter.AutoUpdate, "AutoUpdate should be nil")
+	assert.Nil(t, emptyFilter.Name, "Name should be nil")
 }
 
 // TestUpdateSystemPromptAPI verifies system prompt updates through API logic
@@ -547,7 +718,7 @@ func TestSystemPromptAPIWithMockedDependencies(t *testing.T) {
 	assert.Equal(t, prompt.ID, attachedPrompts[0].ID, "Correct prompt should be attached")
 
 	// Test listing prompts
-	prompts, errx := ListSystemPrompts(ctx, &api.PageAPIRequest{PageSize: 10, PageNumber: 1})
+	prompts, errx := ListSystemPrompts(ctx, &api.PageAPIRequest{PageSize: 10, PageNumber: 1}, nil)
 	require.Nil(t, errx, "ListSystemPrompts should work with mocked dependencies")
 	assert.GreaterOrEqual(t, len(prompts), 1, "Should have at least 1 prompt")
 
