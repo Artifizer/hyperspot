@@ -23,6 +23,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 		string(JobStatusLocked),
 		string(JobStatusCanceling),
 		string(JobStatusSuspending),
+		string(JobStatusRetrying),
 	}
 
 	statusFilter := strings.Join(statesToResume, ",")
@@ -78,6 +79,8 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 				job.LogError("Job %s is timed out, skipping", job.priv.JobID)
 				needToCancel = true
 			} else if status == JobStatusCanceling {
+				needToCancel = true
+			} else if status == JobStatusRetrying {
 				needToCancel = true
 			} else if job.GetTypePtr().WorkerIsSuspendable {
 				// First suspend the job in memory (which doesn't require database access)
