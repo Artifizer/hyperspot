@@ -26,6 +26,7 @@ type BaseLLMService struct {
 	syscap        *syscap.SysCap
 	Name          string
 	APIKeyEnvVar  string
+	ConfigParams  map[string]interface{} // additional parameters coming from config Params
 	baseURL       string
 	HttpClient    *http.Client
 	llmAPIClient  *openapi_client.OpenAIAPIClient
@@ -41,6 +42,7 @@ func NewBaseLLMService(LLMServicePtr LLMService, name string, displayName string
 		Name:          name,
 		baseURL:       baseURL,
 		APIKeyEnvVar:  serviceConfig.APIKeyEnvVar,
+		ConfigParams:  serviceConfig.Params,
 		HttpClient: &http.Client{
 			Timeout: time.Duration(serviceConfig.Upstream.ShortTimeoutSec) * time.Second,
 			Transport: &http.Transport{
