@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/hypernetix/hyperspot/libs/db"
 	"github.com/hypernetix/hyperspot/libs/errorx"
-	"github.com/hypernetix/hyperspot/libs/logging"
 	"github.com/hypernetix/hyperspot/libs/utils"
 	"gorm.io/gorm"
 )
@@ -108,7 +107,7 @@ func jeGetJobQueue(queueName JobQueueName) (*JobQueue, error) {
 
 func (e *jobsExecutor) trace(msg string, args ...interface{}) {
 	if e.deepTracing {
-		logging.Trace("jobsExecutor: "+msg, args...)
+		logger.Trace("jobsExecutor: "+msg, args...)
 	}
 }
 
@@ -126,7 +125,7 @@ func (e *jobsExecutor) getNextJob(queue *JobQueue, workerID int) *JobObj {
 			case *errorx.ErrNotFound:
 				return nil
 			default:
-				logging.Error("failed to get first waiting job: %v", errx)
+				logger.Error("failed to get first waiting job: %v", errx)
 				return nil
 			}
 		}
@@ -571,7 +570,7 @@ func (e *jobsExecutor) getJobByID(jobID uuid.UUID) (*JobObj, errorx.Error) {
 	// Fallback to DB fetch
 	job, errx := getJob(jobID)
 	if errx != nil {
-		logging.Debug("getJobByID(%s) - JOB NOT FOUND, stack: %s", jobID, string(debug.Stack()))
+		logger.Debug("getJobByID(%s) - job not found, stack: %s", jobID, string(debug.Stack()))
 		return nil, errx
 	}
 	e.trace("getJobByID(%s) - from DB, %s@%p, stack: %s", jobID, job.priv.JobID, job, string(debug.Stack()))

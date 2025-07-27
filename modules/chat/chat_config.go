@@ -5,6 +5,7 @@ import (
 
 	"github.com/hypernetix/hyperspot/libs/config"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
 type chatConfig struct {
@@ -90,7 +91,7 @@ func (l *chatLoggerConfig) Load(name string, configDict map[string]interface{}) 
 		return err
 	}
 
-	logger = logging.CreateLogger(cfg)
+	logger = logging.CreateLogger(cfg, utils.GoCallerPackageName(1))
 	logger.ConsoleLogger.Debug("Chat logger initialized")
 
 	return nil

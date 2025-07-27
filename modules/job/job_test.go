@@ -1136,7 +1136,7 @@ func ensureTestSetup() {
 			return
 		}
 
-		logging.Trace("=============== Test DB setup complete =================")
+		logger.Trace("=============== Test DB setup complete =================")
 	})
 }
 

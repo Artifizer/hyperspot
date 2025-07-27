@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/hypernetix/hyperspot/libs/config"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
 // API configuration structure
@@ -60,7 +61,7 @@ func (l *apiLoggerConfig) Load(name string, configDict map[string]interface{}) e
 		return err
 	}
 
-	logger = logging.CreateLogger(cfg)
+	logger = logging.CreateLogger(cfg, utils.GoCallerPackageName(1))
 
 	logger.ConsoleLogger.Debug("API logger initialized")
 	return nil

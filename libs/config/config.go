@@ -148,12 +148,13 @@ type ConfigLLM struct {
 
 // ServiceConfig holds configuration for a specific LLM service type
 type ConfigLLMService struct {
-	APIFormat    string         `mapstructure:"api_format"` // e.g., "openai", "ollama", etc.
-	APIKeyEnvVar string         `mapstructure:"api_key_env_var" doc:"Environment variable containing the API key for the LLM service"`
-	APIKey       string         `mapstructure:"api_key" doc:"API key for the LLM service"`
-	URLs         []string       `mapstructure:"urls"`
-	Model        string         `mapstructure:"model"` // Default model for this service, FIXME: not supported for now
-	Upstream     ConfigUpstream `mapstructure:"upstream"`
+	APIFormat    string                 `mapstructure:"api_format"` // e.g., "openai", "ollama", etc.
+	APIKeyEnvVar string                 `mapstructure:"api_key_env_var" doc:"Environment variable containing the API key for the LLM service"`
+	APIKey       string                 `mapstructure:"api_key" doc:"API key for the LLM service"`
+	URLs         []string               `mapstructure:"urls"`
+	Model        string                 `mapstructure:"model"` // Default model for this service, FIXME: not supported for now
+	Upstream     ConfigUpstream         `mapstructure:"upstream"`
+	Params       map[string]interface{} `mapstructure:"params,omitempty"`
 }
 
 type ConfigLogging struct {
@@ -165,20 +166,60 @@ type ConfigLogging struct {
 	MaxAgeDays   int    `mapstructure:"max_age_days" default:"7"`
 }
 
-func getDefaultHomeDir() string {
+// GetHyperspotHomeDir returns the resolved .hyperspot directory path
+func GetHyperspotHomeDir() (string, error) {
+	return ResolveHomeDir("~/.hyperspot")
+}
+
+// ResolveHomeDir resolves the home directory path based on OS and expands aliases
+func ResolveHomeDir(homeDir string) (string, error) {
+	if homeDir == "" {
+		return "", fmt.Errorf("home dir path is not set")
+	}
+
 	switch runtime.GOOS {
 	case "windows":
-		home := os.Getenv("USERPROFILE")
-		if home == "" {
-			home = os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
+		homeDir = os.ExpandEnv(homeDir)
+	case "darwin", "linux":
+		homeDir = expandHomeDir(homeDir)
+	default:
+		homeDir = expandHomeDir(homeDir)
+	}
+
+	return filepath.Clean(homeDir), nil
+}
+
+// expandHomeDir expands ~/ to the user's home directory
+func expandHomeDir(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path // fallback to original path
 		}
-		return filepath.Join(home, ".hyperspot")
-	case "darwin":
-		return os.ExpandEnv("~/.hyperspot")
-	case "linux":
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+func getDefaultHomeDir() string {
+	homeDir, err := GetHyperspotHomeDir()
+	if err != nil {
+		// Fallback to the original logic
+		switch runtime.GOOS {
+		case "windows":
+			home := os.Getenv("USERPROFILE")
+			if home == "" {
+				home = os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
+			}
+			return filepath.Join(home, ".hyperspot")
+		case "darwin":
+			return os.ExpandEnv("~/.hyperspot")
+		case "linux":
+			return os.ExpandEnv("~/.hyperspot")
+		}
 		return os.ExpandEnv("~/.hyperspot")
 	}
-	return os.ExpandEnv("~/.hyperspot")
+	return homeDir
 }
 
 // ConfigComponent is an interface that configuration components must implement

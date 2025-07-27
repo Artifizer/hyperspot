@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 	"go.uber.org/zap"
 	gorm_logger "gorm.io/gorm/logger"
 )
 
-var logger *logging.Logger = logging.MainLogger // Initially set to main logger, can be overridden by config
+var logger *logging.Logger = logging.MainLogger.WithField(logging.ServiceField, utils.GoCallerPackageName(0)) // Initially set to main logger, can be overridden by config
 
 func ForceLogLevel(level logging.Level) {
 	logger.SetConsoleLogLevel(level)

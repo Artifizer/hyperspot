@@ -10,10 +10,11 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 	"go.uber.org/zap"
 )
 
-var logger *logging.Logger = logging.MainLogger // Initially set to main logger, can be overridden by config
+var logger *logging.Logger = logging.MainLogger.WithField(logging.ServiceField, utils.GoCallerPackageName(1)) // Initially set to main logger, can be overridden by config
 
 // Upstream request logs
 func (c *BaseAPIClient) logUpstreamRequest(req *http.Request) {

@@ -223,7 +223,7 @@ func (j *JobObj) GetType() string {
 func (j *JobObj) GetTypePtr() *JobType {
 	// immutable, no need to refresh from DB
 	if j.priv.TypePtr == nil {
-		logging.Error("internal error: job type is not initialized!")
+		logger.Error("internal error: job type is not initialized!")
 	}
 	return j.priv.TypePtr
 }
@@ -1234,10 +1234,10 @@ func listJobs(ctx context.Context, pageRequest *api.PageAPIRequest, status strin
 	for _, job := range jobs {
 		jobObj := &JobObj{priv: *job}
 		if err := jobObj.initType(job.Type); err != nil {
-			logging.Warn("Failed to init job type for job %s: %v", job.JobID, err)
+			logger.Warn("Failed to init job type for job %s: %v", job.JobID, err)
 		}
 		if err := jobObj.initParams(job.Params); err != nil {
-			logging.Warn("Failed to init job params for job %s: %v", job.JobID, err)
+			logger.Warn("Failed to init job params for job %s: %v", job.JobID, err)
 		}
 		jobsObj = append(jobsObj, jobObj)
 	}

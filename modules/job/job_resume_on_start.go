@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/hypernetix/hyperspot/libs/api"
-	"github.com/hypernetix/hyperspot/libs/logging"
 )
 
 // ResumeJobsOnServerStart finds all jobs in initializing, waiting, running, and locked states
@@ -23,6 +22,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 		string(JobStatusLocked),
 		string(JobStatusCanceling),
 		string(JobStatusSuspending),
+		string(JobStatusRetrying),
 	}
 
 	statusFilter := strings.Join(statesToResume, ",")
@@ -57,7 +57,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 			break
 		}
 
-		logging.Debug("Processing jobs resume after service start, batch: %d, found %d in-progress jobs to resume", page, len(jobs))
+		logger.Debug("Processing jobs resume after service start, batch: %d, found %d in-progress jobs to resume", page, len(jobs))
 
 		for _, job := range jobs {
 			status := job.GetStatus()
@@ -78,6 +78,8 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 				job.LogError("Job %s is timed out, skipping", job.priv.JobID)
 				needToCancel = true
 			} else if status == JobStatusCanceling {
+				needToCancel = true
+			} else if status == JobStatusRetrying {
 				needToCancel = true
 			} else if job.GetTypePtr().WorkerIsSuspendable {
 				// First suspend the job in memory (which doesn't require database access)
@@ -117,13 +119,13 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 				// Then update the entry state in the database afterward
 				err := job.setCanceling(reason)
 				if err != nil {
-					logging.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
+					logger.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
 					totalFailed++
 					continue
 				} else {
 					err = job.setCanceled(reason)
 					if err != nil {
-						logging.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
+						logger.Error("Failed to cancel job %s: %v", job.GetJobID().String(), err)
 						totalFailed++
 						continue
 					}
@@ -142,7 +144,7 @@ func ResumeJobsOnServerStart(ctx context.Context) error {
 	}
 
 	if totalJobs > 0 {
-		logging.Info("Completed in-progress jobs resume after server restart: %d jobs resumed, %d jobs canceled, %d jobs failed",
+		logger.Info("Completed in-progress jobs resume after server restart: %d jobs resumed, %d jobs canceled, %d jobs failed",
 			totalResumed, totalCanceled, totalFailed)
 	}
 	return nil

@@ -76,7 +76,7 @@ func TestCreateLoggerFromConfig(t *testing.T) {
 	}
 
 	// Create a logger from this config
-	logger := CreateLogger(cfg)
+	logger := CreateLogger(cfg, "test")
 
 	// Verify settings were applied
 	assert.Equal(t, TraceLevel, logger.ConsoleLevel, "Console level should be trace")
