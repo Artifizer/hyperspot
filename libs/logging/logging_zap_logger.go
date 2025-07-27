@@ -21,6 +21,9 @@ type zapLogger struct {
 	lastMessages      []any
 	lastMessagesLimit int
 	isTerminal        bool
+
+	// Store fields separately to avoid JSON serialization
+	contextFields []zap.Field
 }
 
 func (zl *zapLogger) addToMemory(level Level, msg string, fields ...zap.Field) {
@@ -49,46 +52,66 @@ func (zl *zapLogger) Trace(msg string, fields ...zap.Field) {
 	if zl.isTerminal {
 		msg = color.BlueString(msg)
 	}
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
 	if ce := zl.logger.Check(zapcore.Level(-2), msg); ce != nil {
-		ce.Write(fields...)
+		ce.Write(allFields...)
 	}
-	zl.addToMemory(TraceLevel, msg, fields...)
+	zl.addToMemory(TraceLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) Debug(msg string, fields ...zap.Field) {
 	if zl.isTerminal {
 		msg = color.MagentaString(msg)
 	}
-	zl.logger.Debug(msg, fields...)
-	zl.addToMemory(DebugLevel, msg, fields...)
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
+	zl.logger.Debug(msg, allFields...)
+	zl.addToMemory(DebugLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) Info(msg string, fields ...zap.Field) {
-	zl.logger.Info(msg, fields...)
-	zl.addToMemory(InfoLevel, msg, fields...)
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
+	zl.logger.Info(msg, allFields...)
+	zl.addToMemory(InfoLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) Warn(msg string, fields ...zap.Field) {
-	zl.logger.Warn(msg, fields...)
-	zl.addToMemory(WarnLevel, msg, fields...)
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
+	zl.logger.Warn(msg, allFields...)
+	zl.addToMemory(WarnLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) Error(msg string, fields ...zap.Field) {
-	zl.logger.Error(msg, fields...)
-	zl.addToMemory(ErrorLevel, msg, fields...)
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
+	zl.logger.Error(msg, allFields...)
+	zl.addToMemory(ErrorLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) Fatal(msg string, fields ...zap.Field) {
-	zl.logger.Fatal(msg, fields...)
-	zl.addToMemory(FatalLevel, msg, fields...)
+	// Combine context fields with additional fields
+	allFields := append(zl.contextFields, fields...)
+	zl.logger.Fatal(msg, allFields...)
+	zl.addToMemory(FatalLevel, msg, allFields...)
 }
 
 func (zl *zapLogger) With(fields ...zap.Field) *zapLogger {
+	// Store fields separately instead of using zap's With to avoid JSON serialization
+	newFields := make([]zap.Field, len(zl.contextFields)+len(fields))
+	copy(newFields, zl.contextFields)
+	copy(newFields[len(zl.contextFields):], fields)
+
 	return &zapLogger{
-		logger:            zl.logger.With(fields...),
+		logger:            zl.logger, // Use same underlying logger
 		lastMessagesLimit: zl.lastMessagesLimit,
 		level:             zl.level,
 		levelSetter:       zl.levelSetter,
+		traceEnabler:      zl.traceEnabler,
+		isTerminal:        zl.isTerminal,
+		contextFields:     newFields,
 		// Notice: Not copying lastMessages to start fresh
 	}
 }
@@ -114,13 +137,7 @@ func (zl *zapLogger) Log(level Level, msg string, args ...interface{}) {
 }
 
 func (zl *zapLogger) WithField(key string, value interface{}) *zapLogger {
-	return &zapLogger{
-		logger:            zl.logger.With(zap.Any(key, value)),
-		lastMessagesLimit: zl.lastMessagesLimit,
-		level:             zl.level,
-		levelSetter:       zl.levelSetter,
-		// Notice: Not copying lastMessages to start fresh
-	}
+	return zl.With(zap.Any(key, value))
 }
 
 func (zl *zapLogger) SetLogLevel(level Level) {
