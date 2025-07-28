@@ -39,17 +39,20 @@ type LLMServiceModelJobParams struct {
 func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj) errorx.Error {
 	jobParamsPtr := job.GetParamsPtr()
 	if jobParamsPtr == nil {
+		job.CancelRetry(ctx)
 		return errorx.NewErrInternalServerError("internal error, '%s' job does't have parameters set", job.GetType())
 	}
 
 	paramsPtr, ok := jobParamsPtr.(*LLMModelJobParams)
 	if !ok {
+		job.CancelRetry(ctx)
 		return errorx.NewErrInternalServerError("internal error, '%s' job parameters are not of type LLMModelJobParams", job.GetType())
 	}
 
 	var err error
 
 	if job.GetTypePtr() == nil {
+		job.CancelRetry(ctx)
 		return errorx.NewErrInternalServerError("internal error, '%s' job does't have type set", job.GetType())
 	}
 
@@ -68,20 +71,20 @@ func LLMModelJobWorkerExecutor(ctx context.Context, job *job.JobObj) errorx.Erro
 	switch job.GetTypePtr().Name {
 	case MODEL_JOB_TYPE_LOAD:
 		job.LogInfo("Loading model '%s'", paramsPtr.ModelName)
-		_, err = LoadModel(ctx, paramsPtr.ModelName, progress)
+		_, err = loadModel(ctx, job, paramsPtr.ModelName, progress)
 	case MODEL_JOB_TYPE_UNLOAD:
 		job.LogInfo("Unloading model '%s'", paramsPtr.ModelName)
-		_, err = UnloadModel(ctx, paramsPtr.ModelName, progress)
+		_, err = unloadModel(ctx, job, paramsPtr.ModelName, progress)
 	case MODEL_JOB_TYPE_UPDATE:
 		job.LogInfo("Updating model '%s'", paramsPtr.ModelName)
-		_, err = UpdateModel(ctx, paramsPtr.ModelName, progress)
+		_, err = updateModel(ctx, job, paramsPtr.ModelName, progress)
 	case MODEL_JOB_TYPE_DELETE:
 		job.LogInfo("Deleting model '%s'", paramsPtr.ModelName)
-		err = DeleteModel(ctx, paramsPtr.ModelName, progress)
+		err = deleteModel(ctx, job, paramsPtr.ModelName, progress)
 	}
 
 	if err != nil {
-		return errorx.NewErrInternalServerError("internal error, failed to load model '%s': %s", paramsPtr.ModelName, err.Error())
+		return errorx.NewErrInternalServerError("internal error, '%s' operation failed for model '%s': %s", job.GetTypePtr().Name, paramsPtr.ModelName, err.Error())
 	}
 
 	if ctx.Err() != nil {
@@ -131,10 +134,10 @@ func LLMServiceModelJobWorkerExecutor(ctx context.Context, job *job.JobObj) erro
 	switch job.GetTypePtr().Name {
 	case MODEL_JOB_TYPE_IMPORT:
 		job.LogInfo("Importing model '%s' into service '%s'", paramsPtr.ModelName, service.GetName())
-		model, err = ImportModel(ctx, service.GetName(), paramsPtr.ModelName, progress)
+		model, err = importModel(ctx, job, service.GetName(), paramsPtr.ModelName, progress)
 	case MODEL_JOB_TYPE_INSTALL:
 		job.LogInfo("Installing model '%s' into service '%s'", paramsPtr.ModelName, service.GetName())
-		model, err = InstallModel(ctx, service.GetName(), paramsPtr.ModelName, progress)
+		model, err = installModel(ctx, job, service.GetName(), paramsPtr.ModelName, progress)
 	default:
 		return errorx.NewErrInternalServerError("invalid job type: %s", job.GetType())
 	}
