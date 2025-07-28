@@ -467,7 +467,7 @@ func TestCreateTempFile_ConfiguredTempDir(t *testing.T) {
 
 func TestParseLocalDocument(t *testing.T) {
 	// We need actual test files for this test
-	testDataDir := "../../../tests/data"
+	testDataDir := "../../../testdata"
 
 	t.Run("Parse valid PDF file", func(t *testing.T) {
 		pdfPath := filepath.Join(testDataDir, "pdf", "test_file_one_page_en.pdf")
@@ -542,8 +542,8 @@ func TestParseLocalDocument(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, doc)
-		var internalErr *errorx.ErrInternalServerError
-		assert.True(t, errors.As(err, &internalErr))
+		var notFoundErr *errorx.ErrNotFound
+		assert.True(t, errors.As(err, &notFoundErr))
 	})
 
 	t.Run("Unsupported file type", func(t *testing.T) {
