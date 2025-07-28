@@ -25,6 +25,13 @@ const (
 	TraceLevel
 )
 
+const (
+	// ServiceField is a field that is added to the log message to identify the service that the log message is from
+	// example #1 - logging.CreateLogger(&c.Config).WithField(logging.ServiceField, "db")
+	// example #2 - logging.MainLogger.WithField(logging.ServiceField, "db")
+	ServiceField = "service"
+)
+
 // Updated Logger struct to include LastInMemMessages field
 type Logger struct {
 	ConsoleLogger *zapLogger
@@ -95,7 +102,7 @@ func NewLogger(
 		// Create a trace-capable level enabler that wraps the atomic level
 		traceEnabler := NewTraceCapableLevelEnabler(atom, consoleLevel >= TraceLevel)
 
-		consoleEncoder := zapcore.NewConsoleEncoder(getConsoleEncoderConfig())
+		consoleEncoder := NewConsoleEncoderWithFields(getConsoleEncoderConfig())
 		consoleWriter := zapcore.AddSync(os.Stdout)
 		consoleCore := zapcore.NewCore(consoleEncoder,
 			consoleWriter,
