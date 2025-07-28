@@ -3,6 +3,7 @@ package job
 import (
 	"github.com/hypernetix/hyperspot/libs/config"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
 type jobLoggerConfig struct {
@@ -30,7 +31,7 @@ func (l *jobLoggerConfig) Load(name string, configDict map[string]interface{}) e
 		return err
 	}
 
-	logger = logging.CreateLogger(cfg)
+	logger = logging.CreateLogger(cfg, utils.GoCallerPackageName(1))
 	logger.ConsoleLogger.Debug("Upstream API client logger initialized")
 
 	return nil

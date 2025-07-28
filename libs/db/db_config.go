@@ -3,6 +3,7 @@ package db
 import (
 	"github.com/hypernetix/hyperspot/libs/config"
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 )
 
 type ConfigDatabaseLogger struct {
@@ -32,7 +33,7 @@ func (c *ConfigDatabaseLogger) Load(name string, configDict map[string]interface
 
 	c.Config = *cfg
 
-	logger = logging.CreateLogger(&c.Config)
+	logger = logging.CreateLogger(&c.Config, utils.GoCallerPackageName(1))
 	logger.ConsoleLogger.Debug("Database logger initialized")
 
 	return nil

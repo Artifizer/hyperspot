@@ -29,7 +29,7 @@ func (l *mainLoggingConfig) Load(name string, configDict map[string]interface{})
 		return err
 	}
 
-	MainLogger = CreateLogger(cfg) // override main logger based on config settings
+	MainLogger = CreateLogger(cfg, "main") // override main logger based on config settings
 	MainLogger.ConsoleLogger.Debug("Main logger initialized")
 
 	return nil

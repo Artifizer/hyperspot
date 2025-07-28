@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/hypernetix/hyperspot/libs/api"
@@ -117,7 +114,7 @@ func initMain() error {
 
 // ServerHomeDirInit initializes the server's home directory and changes to it
 func serverHomeDirInit(cfg *config.Config) (string, error) {
-	homeDir, err := resolveHomeDir(cfg.Server.HomeDir)
+	homeDir, err := config.ResolveHomeDir(cfg.Server.HomeDir)
 	if err != nil {
 		return "", err
 	}
@@ -135,33 +132,7 @@ func serverHomeDirInit(cfg *config.Config) (string, error) {
 	return homeDir, nil
 }
 
-// resolveHomeDir resolves the home directory path based on OS and expands aliases
-func resolveHomeDir(homeDir string) (string, error) {
-	if homeDir == "" {
-		return "", fmt.Errorf("home dir path is not set")
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		homeDir = os.ExpandEnv(homeDir)
-	case "darwin", "linux":
-		homeDir = expandHomeDir(homeDir) // Use Mac config for both Mac and Linux
-	default:
-		homeDir = expandHomeDir(homeDir)
-	}
-
-	// Clean the path to remove any redundant separators or ./
-	return filepath.Clean(homeDir), nil
-}
-
-// expandHomeDir expands ~/ to the user's home directory
-func expandHomeDir(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			logging.Fatal("Failed to get user home directory: %s", err)
-		}
-		return filepath.Join(home, path[2:])
-	}
-	return path
+// GetHyperspotHomeDir returns the resolved .hyperspot directory path
+func GetHyperspotHomeDir() (string, error) {
+	return config.GetHyperspotHomeDir()
 }

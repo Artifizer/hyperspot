@@ -4,10 +4,11 @@ import (
 	"fmt"
 
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 	"go.uber.org/zap"
 )
 
-var logger = logging.MainLogger
+var logger = logging.MainLogger.WithField(logging.ServiceField, utils.GoCallerPackageName(1))
 
 func (t *ChatThread) Log(level logging.Level, msg string, args ...interface{}) {
 	msg = fmt.Sprintf(msg, args...)

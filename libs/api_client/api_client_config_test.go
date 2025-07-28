@@ -39,14 +39,22 @@ func TestUpstreamLoggerConfig_Load_Valid(t *testing.T) {
 		"max_age_days":  7,
 	}
 
-	assert.Equal(t, logger, logging.MainLogger, "Logger should be the main logger")
+	// Store initial logger reference
+	initialLogger := logger
+	assert.NotNil(t, logger, "Logger should not be nil initially")
+	// The logger is initially a derived logger from MainLogger with service field, not MainLogger itself
+	assert.NotSame(t, logger, logging.MainLogger, "Logger should initially be a derived logger, not MainLogger")
 
 	// Call Load with the custom config.
 	err := upstreamLoggerConfigInstance.Load("test", customConfig)
 	assert.NoError(t, err, "Load() should not return an error when provided a valid config")
 
 	assert.NotNil(t, logger, "Logger should not be nil")
-	assert.NotEqual(t, logger, logging.MainLogger, "Logger should not be the main logger")
+	assert.NotSame(t, logger, initialLogger, "Logger should not be the same instance after Load()")
+
+	// Verify logger properties match the config
+	assert.Equal(t, logging.DebugLevel, logger.ConsoleLevel, "Console level should be DEBUG")
+	assert.Equal(t, logging.ErrorLevel, logger.FileLevel, "File level should be ERROR")
 
 	// Optionally log a debug message (this message should be emitted via the newly created logger).
 	// Note: In your production logger, this will write to the ConsoleLogger.

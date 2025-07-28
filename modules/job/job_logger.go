@@ -4,10 +4,11 @@ import (
 	"fmt"
 
 	"github.com/hypernetix/hyperspot/libs/logging"
+	"github.com/hypernetix/hyperspot/libs/utils"
 	"go.uber.org/zap"
 )
 
-var logger *logging.Logger = logging.MainLogger // Initially set to main logger, can be overridden by config
+var logger *logging.Logger = logging.MainLogger.WithField(logging.ServiceField, utils.GoCallerPackageName(1)) // Initially set to main logger, can be overridden by config
 
 func (j *JobObj) Log(level logging.Level, msg string, args ...interface{}) {
 	// Format the message with arguments first

@@ -3,6 +3,7 @@ package logging
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/fatih/color"
 	"github.com/hypernetix/hyperspot/libs/config"
@@ -27,7 +28,7 @@ const (
 
 const (
 	// ServiceField is a field that is added to the log message to identify the service that the log message is from
-	// example #1 - logging.CreateLogger(&c.Config).WithField(logging.ServiceField, "db")
+	// example #1 - logging.CreateLogger(&c.Config, "db")
 	// example #2 - logging.MainLogger.WithField(logging.ServiceField, "db")
 	ServiceField = "service"
 )
@@ -50,7 +51,7 @@ var MainLogger *Logger = &Logger{
 	FileLevel:     ErrorLevel, // default 0
 }*/
 
-var MainLogger *Logger = NewLogger(InfoLevel, "", DebugLevel, 0, 0, 0)
+var MainLogger *Logger = NewLogger(InfoLevel, "", DebugLevel, 0, 0, 0).WithField(ServiceField, "main")
 
 var forcedLogLevel *Level = nil
 
@@ -62,15 +63,18 @@ func ForceLogLevel(level Level) {
 	}
 }
 
-func CreateLogger(cfg *config.ConfigLogging) *Logger {
+func CreateLogger(cfg *config.ConfigLogging, serviceName string) *Logger {
+	// Resolve log file path to absolute path in .hyperspot directory
+	logFilePath := resolveLogFilePath(cfg.File)
+
 	return NewLogger(
 		stringToLevel(cfg.ConsoleLevel),
-		cfg.File,
+		logFilePath,
 		stringToLevel(cfg.FileLevel),
 		cfg.MaxSizeMB,
 		cfg.MaxBackups,
 		cfg.MaxAgeDays,
-	)
+	).WithField(ServiceField, serviceName)
 }
 
 // Updated NewLogger to accept lastInMemMessages parameter
@@ -125,6 +129,14 @@ func NewLogger(
 
 		// Create a trace-capable level enabler that wraps the atomic level
 		traceEnabler := NewTraceCapableLevelEnabler(atom, fileLevel >= TraceLevel)
+
+		// Ensure the log directory exists
+		if fileName != "" {
+			if err := os.MkdirAll(filepath.Dir(fileName), 0755); err != nil {
+				// If we can't create the directory, log to stderr and continue
+				fmt.Fprintf(os.Stderr, "Warning: Failed to create log directory %s: %v\n", filepath.Dir(fileName), err)
+			}
+		}
 
 		fileEncoder := zapcore.NewJSONEncoder(getFileEncoderConfig())
 		fileWriter := zapcore.AddSync(&lumberjack.Logger{
@@ -187,16 +199,27 @@ func getConsoleEncoderConfig() zapcore.EncoderConfig {
 	return cfg
 }
 
-// traceCapableLevelEncoder is a custom level encoder that properly displays TRACE level
+// traceCapableLevelEncoder is a custom level encoder that properly displays TRACE level with 5-char padding
 func traceCapableLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
-	if l == ZapTraceLevel {
+	switch l {
+	case ZapTraceLevel:
 		enc.AppendString("TRACE")
-	} else {
+	case zapcore.DebugLevel:
+		enc.AppendString("DEBUG")
+	case zapcore.InfoLevel:
+		enc.AppendString("INFO ")
+	case zapcore.WarnLevel:
+		enc.AppendString("WARN ")
+	case zapcore.ErrorLevel:
+		enc.AppendString("ERROR")
+	case zapcore.FatalLevel:
+		enc.AppendString("FATAL")
+	default:
 		zapcore.CapitalLevelEncoder(l, enc)
 	}
 }
 
-// traceCapableColorLevelEncoder is a custom level encoder that properly displays colored TRACE level
+// traceCapableColorLevelEncoder is a custom level encoder that properly displays colored TRACE level with 5-char padding
 func traceCapableColorLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
 	switch l {
 	case ZapTraceLevel:
@@ -204,7 +227,13 @@ func traceCapableColorLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEn
 	case zapcore.DebugLevel:
 		enc.AppendString(color.MagentaString("DEBUG"))
 	case zapcore.InfoLevel:
-		enc.AppendString(color.CyanString("INFO"))
+		enc.AppendString(color.CyanString("INFO "))
+	case zapcore.WarnLevel:
+		enc.AppendString(color.YellowString("WARN "))
+	case zapcore.ErrorLevel:
+		enc.AppendString(color.RedString("ERROR"))
+	case zapcore.FatalLevel:
+		enc.AppendString(color.RedString("FATAL"))
 	default:
 		zapcore.CapitalColorLevelEncoder(l, enc)
 	}
@@ -405,4 +434,38 @@ func (l *Logger) SetConsoleLogLevel(level Level) {
 func (l *Logger) SetFileLogLevel(level Level) {
 	l.FileLevel = level
 	l.FileLogger.SetLogLevel(level)
+}
+
+// resolveLogFilePath converts relative log file paths to absolute paths in the configured server home directory
+func resolveLogFilePath(filePath string) string {
+	if filePath == "" {
+		return ""
+	}
+
+	// If already absolute, return as-is
+	if filepath.IsAbs(filePath) {
+		return filePath
+	}
+
+	// For relative paths, resolve to the configured server home directory
+	// First try to get the configured server home directory
+	cfg := config.Get()
+	var homeDir string
+	var err error
+
+	if cfg != nil && cfg.Server.HomeDir != "" {
+		// Use the configured server home directory
+		homeDir, err = config.ResolveHomeDir(cfg.Server.HomeDir)
+	} else {
+		// Fall back to default .hyperspot directory
+		homeDir, err = config.GetHyperspotHomeDir()
+	}
+
+	if err != nil {
+		// Fallback to original path if resolution fails
+		fmt.Fprintf(os.Stderr, "Warning: Failed to resolve home directory: %v\n", err)
+		return filePath
+	}
+
+	return filepath.Join(homeDir, filePath)
 }
