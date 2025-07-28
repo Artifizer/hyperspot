@@ -872,6 +872,10 @@ func jeSetRetryPolicy(ctx context.Context, job *JobObj, retryDelay time.Duration
 	}
 }
 
+func jeCancelRetry(ctx context.Context, job *JobObj) errorx.Error {
+	return jeSetRetryPolicy(ctx, job, 0, 0, 0)
+}
+
 func JEShutdown() {
 	jobExecutorMu.Lock()
 	defer jobExecutorMu.Unlock()
