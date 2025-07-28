@@ -116,6 +116,10 @@ func ParseLocalDocument(path string) (*document.Document, errorx.Error) {
 	doc.TenantID = auth.GetTenantID()
 	doc.UserID = auth.GetUserID()
 
+	if !utils.FileExists(path) {
+		return nil, errorx.NewErrNotFound("file does not exist or can't be accessed: %s", path)
+	}
+
 	// Get file size
 	fileInfo, err := os.Stat(path)
 	if err != nil {
