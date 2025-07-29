@@ -212,10 +212,9 @@ func TestFileParserDOCX_ErrorHandling(t *testing.T) {
 	}
 }
 
-const testDataDir = "../../tests/data"
+const testDataDir = "../../testdata"
 
 func readFile(t *testing.T, fileName string) *os.File {
-
 	docxPath := filepath.Join(testDataDir, "docx", fileName)
 
 	if _, err := os.Stat(docxPath); os.IsNotExist(err) {
