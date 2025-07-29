@@ -450,6 +450,21 @@ func (j *JobObj) SetRetryPolicy(ctx context.Context, retryDelay time.Duration, m
 	return jeSetRetryPolicy(ctx, j, retryDelay, maxRetries, timeout)
 }
 
+// CancelRetry cancels the retry policy for the job.
+//
+// This method allows to stop future retries of the job in case of failure. It can
+// be used to prevent the job from being retried when it is no longer meaningful
+// or when it is expected to fail permanently.
+//
+// Parameters:
+//   - ctx: The context for the operation, which may include timeout or cancellation signals
+//
+// Returns:
+//   - errorx.Error: An error if the operation fails, or nil on success
+func (j *JobObj) CancelRetry(ctx context.Context) errorx.Error {
+	return jeCancelRetry(ctx, j)
+}
+
 // SaveWorkerSnapshot persists a custom worker state snapshot to the database.
 //
 // This method allows a job worker to save its current execution state as a JSON-serializable
