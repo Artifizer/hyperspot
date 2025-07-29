@@ -14,6 +14,7 @@ import (
 	"github.com/hypernetix/hyperspot/libs/errorx"
 	"github.com/hypernetix/hyperspot/libs/logging"
 	"github.com/hypernetix/hyperspot/libs/utils"
+	"github.com/hypernetix/hyperspot/modules/job"
 )
 
 var logger *logging.Logger = logging.MainLogger
@@ -484,9 +485,10 @@ func GetModelOrFirstLoaded(ctx context.Context, modelName string) (*LLMModel, er
 	return model, nil
 }
 
-func ImportModel(ctx context.Context, serviceName string, modelName string, progress chan<- float32) (*LLMModel, error) {
+func importModel(ctx context.Context, j *job.JobObj, serviceName string, modelName string, progress chan<- float32) (*LLMModel, error) {
 	service, err := GetServiceByName(serviceName)
 	if err != nil {
+		j.CancelRetry(ctx)
 		return nil, fmt.Errorf("failed to get service: %w", err)
 	}
 
@@ -507,9 +509,10 @@ func ImportModel(ctx context.Context, serviceName string, modelName string, prog
 	return model, nil
 }
 
-func InstallModel(ctx context.Context, serviceName string, modelName string, progress chan<- float32) (*LLMModel, error) {
+func installModel(ctx context.Context, j *job.JobObj, serviceName string, modelName string, progress chan<- float32) (*LLMModel, error) {
 	service, err := GetServiceByName(serviceName)
 	if err != nil {
+		j.CancelRetry(ctx)
 		return nil, fmt.Errorf("failed to get service: %w", err)
 	}
 
@@ -530,7 +533,7 @@ func InstallModel(ctx context.Context, serviceName string, modelName string, pro
 	return model, nil
 }
 
-func UpdateModel(ctx context.Context, modelName string, progress chan<- float32) (*LLMModel, error) {
+func updateModel(ctx context.Context, j *job.JobObj, modelName string, progress chan<- float32) (*LLMModel, error) {
 	model := GetModel(ctx, modelName, false, ModelStateAny)
 	if model == nil {
 		return nil, fmt.Errorf("model '%s' not found", modelName)
@@ -538,6 +541,7 @@ func UpdateModel(ctx context.Context, modelName string, progress chan<- float32)
 
 	service, err := GetServiceByName(model.Service)
 	if err != nil {
+		j.CancelRetry(ctx)
 		return nil, fmt.Errorf("failed to get service: %w", err)
 	}
 
@@ -553,9 +557,10 @@ func UpdateModel(ctx context.Context, modelName string, progress chan<- float32)
 	return model, nil
 }
 
-func LoadModel(ctx context.Context, modelName string, progress chan<- float32) (*LLMModel, error) {
+func loadModel(ctx context.Context, j *job.JobObj, modelName string, progress chan<- float32) (*LLMModel, error) {
 	model := GetModel(ctx, modelName, true, ModelStateAny)
 	if model == nil {
+		j.CancelRetry(ctx)
 		return nil, fmt.Errorf("model '%s' not found", modelName)
 	}
 
@@ -567,9 +572,10 @@ func LoadModel(ctx context.Context, modelName string, progress chan<- float32) (
 	return model, nil
 }
 
-func UnloadModel(ctx context.Context, modelName string, progress chan<- float32) (*LLMModel, error) {
+func unloadModel(ctx context.Context, j *job.JobObj, modelName string, progress chan<- float32) (*LLMModel, error) {
 	model := GetModel(ctx, modelName, true, ModelStateAny)
 	if model == nil {
+		j.CancelRetry(ctx)
 		return nil, fmt.Errorf("model '%s' not found", modelName)
 	}
 
@@ -581,9 +587,10 @@ func UnloadModel(ctx context.Context, modelName string, progress chan<- float32)
 	return model, nil
 }
 
-func DeleteModel(ctx context.Context, modelName string, progress chan<- float32) errorx.Error {
+func deleteModel(ctx context.Context, j *job.JobObj, modelName string, progress chan<- float32) errorx.Error {
 	model := GetModel(ctx, modelName, false, ModelStateAny)
 	if model == nil {
+		j.CancelRetry(ctx)
 		return errorx.NewErrNotFound(fmt.Sprintf("Model '%s' not found", modelName))
 	}
 

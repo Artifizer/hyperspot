@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hypernetix/hyperspot/libs/api"
 	"github.com/hypernetix/hyperspot/libs/config"
@@ -15,6 +16,7 @@ import (
 )
 
 var LMStudioServiceName = LLMServiceName("lm_studio")
+var useWebSocketParam = "use_web_socket"
 
 type lmstudioLogger struct {
 	logger *logging.Logger
@@ -56,7 +58,7 @@ type LMStudioService struct {
 func NewLMStudioService(baseURL string, serviceConfig config.ConfigLLMService, logger *logging.Logger) *LMStudioService {
 	service := &LMStudioService{}
 	service.BaseLLMService = NewBaseLLMService(service, string(LMStudioServiceName), "LM Studio", baseURL, serviceConfig)
-	service.logger = logger.WithField("service", string(LMStudioServiceName))
+	service.logger = logger.WithField(logging.ServiceField, string(LMStudioServiceName))
 	service.lmstudioClientLogger = &lmstudioLogger{logger: service.logger}
 	service.lmstudioClient = lmstudio.NewLMStudioClient(baseURL, service.lmstudioClientLogger)
 	return service
@@ -194,7 +196,7 @@ func (s *LMStudioService) GetModel(ctx context.Context, modelName string) (*LLMM
 	return s.initModelFromAPIResponse(modelData)
 }
 
-func (s *LMStudioService) LoadModel(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+func (s *LMStudioService) loadModelThroughHTTP(ctx context.Context, model *LLMModel, progress chan<- float32) error {
 	body := map[string]string{"model": model.UpstreamModelName}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
@@ -208,6 +210,7 @@ func (s *LMStudioService) LoadModel(ctx context.Context, model *LLMModel, progre
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.makeHTTPCall(ctx, req)
+
 	if err != nil {
 		return &LLMServiceError{Service: s.GetName(), Message: "failed to load model", Cause: err}
 	}
@@ -217,10 +220,65 @@ func (s *LMStudioService) LoadModel(ctx context.Context, model *LLMModel, progre
 		return &LLMServiceError{Service: s.GetName(), Message: fmt.Sprintf("failed to load model: status %d", resp.StatusCode)}
 	}
 
+	// Send 100% progress at the end if channel is available
+	if progress != nil {
+		select {
+		case progress <- 100.0:
+			// Final progress sent successfully
+		default:
+			// Channel is full or closed
+		}
+	}
+
 	return nil
 }
 
-func (s *LMStudioService) UnloadModel(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+func (s *LMStudioService) loadModelThroughWebSocket(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+	// Use the lmstudio-go library to load the model
+	err := s.lmstudioClient.LoadModelWithProgressContext(ctx, 300*time.Second, model.UpstreamModelName, func(progr float64, modelInfo *lmstudio.Model) {
+		if progress != nil {
+			// Report progress as a percentage from 0.0 to 100.0
+			progressValue := float32(progr) * 100
+			select {
+			case progress <- progressValue:
+				// Progress sent successfully
+			default:
+				// Channel is full or closed, just log and continue
+				s.logger.Debug("Could not send progress update: %v", progressValue)
+			}
+
+			// Log the progress information
+			s.logger.Debug("Loading model %s: %d%% complete", model.UpstreamModelName, progress)
+		}
+	})
+	if err != nil {
+		s.logger.Debug("failed to load model '%s' through WebSocket: %v, %s", model.UpstreamModelName, err, err.Error())
+		return &LLMServiceError{Service: s.GetName(), Message: "failed to load model", Cause: err}
+	}
+
+	// Send 100% progress at the end if channel is available
+	if progress != nil {
+		select {
+		case progress <- 100.0:
+			// Final progress sent successfully
+		default:
+			// Channel is full or closed
+		}
+	}
+
+	return nil
+}
+
+func (s *LMStudioService) LoadModel(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+	if s.ConfigParams != nil {
+		if useWebSocket, ok := s.ConfigParams[useWebSocketParam].(bool); ok && useWebSocket {
+			return s.loadModelThroughWebSocket(ctx, model, progress)
+		}
+	}
+	return s.loadModelThroughHTTP(ctx, model, progress)
+}
+
+func (s *LMStudioService) unloadModelThroughHTTP(ctx context.Context, model *LLMModel, progress chan<- float32) error {
 	req, err := http.NewRequestWithContext(ctx, "POST", s.baseURL+"/api/models/unload", nil)
 	if err != nil {
 		return &LLMServiceError{Service: s.GetName(), Message: "failed to create request", Cause: err}
@@ -228,6 +286,7 @@ func (s *LMStudioService) UnloadModel(ctx context.Context, model *LLMModel, prog
 
 	resp, err := s.makeHTTPCall(ctx, req)
 	if err != nil {
+		s.logger.Debug("failed to unload model '%s' through HTTP: %v", model.UpstreamModelName, err)
 		return &LLMServiceError{Service: s.GetName(), Message: "failed to unload model", Cause: err}
 	}
 	defer resp.Body.Close()
@@ -237,6 +296,40 @@ func (s *LMStudioService) UnloadModel(ctx context.Context, model *LLMModel, prog
 	}
 
 	return nil
+}
+
+func (s *LMStudioService) unloadModelThroughWebSocket(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+	// Use the lmstudio-go library to load the model
+	err := s.lmstudioClient.UnloadModel(model.UpstreamModelName)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no model found") {
+			// Model not found, ignore
+			s.logger.Trace("model '%s' not loaded, ignoring unload request", model.UpstreamModelName)
+		} else {
+			s.logger.Debug("failed to unload model '%s' through WebSocket: %v", model.UpstreamModelName, err)
+			return &LLMServiceError{Service: s.GetName(), Message: "failed to unload model", Cause: err}
+		}
+	}
+	if progress != nil {
+		select {
+		case progress <- 100.0:
+			// Progress sent successfully
+		default:
+			// Channel is full or closed, just log and continue
+			s.logger.Debug("Could not send 100%% progress update on model '%s' unload", model.UpstreamModelName)
+		}
+	}
+
+	return nil
+}
+
+func (s *LMStudioService) UnloadModel(ctx context.Context, model *LLMModel, progress chan<- float32) error {
+	if s.ConfigParams != nil {
+		if useWebSocket, ok := s.ConfigParams[useWebSocketParam].(bool); ok && useWebSocket {
+			return s.unloadModelThroughWebSocket(ctx, model, progress)
+		}
+	}
+	return s.unloadModelThroughHTTP(ctx, model, progress)
 }
 
 func (s *LMStudioService) DeleteModel(ctx context.Context, modelName string, progress chan<- float32) error {
@@ -259,11 +352,11 @@ func (s *LMStudioService) GetCapabilities() *LLMServiceCapabilities {
 		InstallModel:               false,
 		ImportModel:                false,
 		UpdateModel:                false,
-		LoadModel:                  false,
-		LoadModelProgress:          false,
-		LoadModelCancel:            false,
-		LoadModelTimeout:           false,
-		UnloadModel:                false,
+		LoadModel:                  true,
+		LoadModelProgress:          true,
+		LoadModelCancel:            true,
+		LoadModelTimeout:           true,
+		UnloadModel:                true,
 		DeleteModel:                false,
 		HuggingfaceModelsSupported: true,
 		OllamaModelsSupported:      false,
@@ -282,6 +375,9 @@ func init() {
 			LongTimeoutSec:  180,
 			VerifyCert:      true,
 			EnableDiscovery: true,
+		},
+		Params: map[string]interface{}{
+			useWebSocketParam: true, // use web socket by default
 		},
 	})
 }
